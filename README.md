@@ -10,7 +10,7 @@ An FTP server that runs on the watch, so a phone can copy files to and from it o
 - Package: `io.github.leggerezza.files`
 - SDK: target 26.0.0, compatible 6.1.0(23)
 - Builds, signs and installs on the watch
-- Tested end to end on the device
+- Tested end to end on the device, including with the screen off
 
 ```
 wrong password       rejected
@@ -47,7 +47,8 @@ Generated on every start and shown on the watch face.
 - password: 6 characters, `a-z` without `i l o` plus `2-9` without `0 1`
 - control port is random too, 30000-59999, new one on every start
 - 3 wrong `PASS` on one connection: `421` and the connection closes
-- 12 wrong `PASS` in total: the server stops
+- 20 wrong `PASS` within 60 seconds, from any address: logins refused for 30 seconds
+- the server never shuts itself down, so a stranger cannot kill it by guessing
 - `USER` always gets `331`, so it does not confirm the account name
 - the password is never logged
 - before login only `USER PASS QUIT FEAT SYST NOOP` are answered
@@ -63,6 +64,21 @@ Why not FTPS, HTTPS or WebDAV: [docs/protocol-assessment.md](docs/protocol-asses
 - passive mode only: `PASV` (227) and `EPSV` (229); `PORT` and `EPRT` get `502`
 - client paths are normalised and `..` is clamped at the virtual root
 - commands on one connection run in order, so a transfer cannot interleave with the next command
+
+## Tests
+
+`Test-Ftp-Suite.ps1` talks to the server over a raw control connection and hand-built passive data channels. 54 checks: pre-auth gate, credential handling, path-traversal clamping, unicode file names, SIZE/MDTM/MLSD, APPE, REST resume, directory semantics, rename, an 8 MB transfer compared by SHA-256, two concurrent clients, cleanup.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Test-Ftp-Suite.ps1 -WatchIp 192.168.137.223 -Port 46587 -User uwng -Pass ufesh2 -LargeMb 8
+# add -TestLockout to also drive the 30 s cooldown (takes ~35 s longer)
+```
+
+Last run with the screen off: 8 MB up at 2.0 MB/s, down at 3.0 MB/s, SHA-256 equal.
+
+## Background execution
+
+The page starts a `DATA_TRANSFER` continuous task when the server starts, and stops it when the server stops. Without it the system freezes the page as soon as it is in the background and the listening socket stops answering even though the port stays open. Verified by suspending the display (`power-shell suspend`) and running the whole suite against it.
 
 ## Build, install, test
 
@@ -93,10 +109,11 @@ tools/Start-Hotspot.ps1                     revives the Windows mobile hotspot
 
 ## Not done
 
-- No background task. The server lives while the page is in front, so the screen going off can kill a long transfer. Needs `backgroundTaskManager` with `DATA_TRANSFER` and `ohos.permission.KEEP_BACKGROUND_RUNNING`.
 - No phone app. The phone side is a third-party FTP client.
 - No HTTP portal or WebDAV yet; see the assessment doc.
 - UI strings are Chinese.
+
+Deep sleep: the continuous task keeps the process and the socket alive, but after long idle the watch may drop off Wi-Fi anyway (it stops answering ping until the screen is woken). That is a radio power decision, not something the app controls.
 
 ## Windows note
 

@@ -32,7 +32,8 @@ FTPS on this device is not a "can it be done" question. Implicit FTPS is technic
 | Key space | 24^4 * 31^6, about 2.9e14 |
 | Randomness | `cryptoFramework.createRandom().generateRandomSync()`, `Math.random` only if that throws |
 | Lifetime | regenerated on every start, together with the control port |
-| Brute force | 3 failures per connection sends `421` and closes it; 12 failures overall stops the server |
+| Brute force | 3 failures per connection sends `421` and closes it; 20 failures in 60 s trigger a 30 s login cooldown |
+| Availability | the server never stops itself on failures, so guessing cannot be turned into a denial of service |
 | Disclosure | `USER` always answers `331`; the password is not written to the log |
 | Before login | only `USER PASS QUIT FEAT SYST NOOP` are answered, everything else gets `530` |
 

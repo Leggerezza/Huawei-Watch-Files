@@ -68,7 +68,8 @@ export class FtpServer {
   private localIp: string = '127.0.0.1';
   private userName: string = '';
   private password: string = '';
-  private failures: number = 0;
+  private failTimes: number[] = [];
+  private lockUntil: number = 0;
 
   onLog: (msg: string) => void = (msg: string) => {
     console.info(`[FTP] ${msg}`);
@@ -105,7 +106,8 @@ export class FtpServer {
     this.store.ensureRoot();
     this.localIp = localIp.length > 0 ? localIp : '127.0.0.1';
     this.probePaths();
-    this.failures = 0;
+    this.failTimes = [];
+    this.lockUntil = 0;
     this.makeCreds();
 
     let lastError: string = '';
@@ -194,6 +196,13 @@ export class FtpServer {
   }
 
   private async cmdPass(s: FtpSession, arg: string): Promise<void> {
+    const now: number = Date.now();
+    if (now < this.lockUntil) {
+      const wait: number = Math.ceil((this.lockUntil - now) / 1000);
+      await this.reply(s, `421 Too many failed logins, retry in ${wait}s.`);
+      await this.dropSession(s);
+      return;
+    }
     if (this.password.length > 0 && s.userTried === this.userName && arg === this.password) {
       s.authed = true;
       this.log(`#${s.id} login ok`);
@@ -201,19 +210,36 @@ export class FtpServer {
       return;
     }
     s.failCount = s.failCount + 1;
-    this.failures = this.failures + 1;
-    this.log(`#${s.id} login failed (session ${s.failCount}, total ${this.failures})`);
+    this.noteFailure(now);
+    this.log(`#${s.id} login failed (session ${s.failCount}, recent ${this.failTimes.length})`);
     if (s.failCount >= 3) {
       await this.reply(s, '421 Too many failed logins, closing connection.');
       await this.dropSession(s);
       return;
     }
     await this.reply(s, '530 Login incorrect.');
-    if (this.failures >= 12) {
-      this.log('too many failed logins overall, shutting the server down');
-      setTimeout(() => {
-        this.stop();
-      }, 10);
+  }
+
+  /**
+   * Sliding-window throttle. Deliberately does NOT stop the server: a stranger
+   * who can reach the port must not be able to shut the service down for its
+   * owner. After the threshold, logins are refused for a short cooldown while
+   * already authenticated sessions keep working.
+   */
+  private noteFailure(now: number): void {
+    const windowStart: number = now - 60000;
+    const kept: number[] = [];
+    for (let i = 0; i < this.failTimes.length; i++) {
+      if (this.failTimes[i] >= windowStart) {
+        kept.push(this.failTimes[i]);
+      }
+    }
+    kept.push(now);
+    this.failTimes = kept;
+    if (kept.length >= 20) {
+      this.lockUntil = now + 30000;
+      this.failTimes = [];
+      this.log('login locked for 30s after too many failures');
     }
   }
 

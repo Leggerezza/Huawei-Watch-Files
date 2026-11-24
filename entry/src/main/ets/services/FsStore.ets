@@ -131,6 +131,12 @@ export class FsStore {
   remove(realPath: string): boolean {
     try {
       if (this.isDir(realPath)) {
+        // Never recurse on behalf of a client: FTP RMD on a non-empty
+        // directory has to fail, otherwise one command can wipe a tree.
+        const names: string[] = fs.listFileSync(realPath);
+        if (names.length > 0) {
+          return false;
+        }
         fs.rmdirSync(realPath);
       } else {
         fs.unlinkSync(realPath);

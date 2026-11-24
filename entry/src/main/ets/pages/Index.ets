@@ -1,4 +1,5 @@
-import { common } from '@kit.AbilityKit';
+import { common, wantAgent } from '@kit.AbilityKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { FtpServer, FtpStatus } from '../services/FtpServer';
 import { getLocalIpv4 } from '../services/NetInfo';
 
@@ -19,6 +20,7 @@ struct Index {
   @State logLines: string[] = [];
 
   private server: FtpServer | null = null;
+  private keepAlive: boolean = false;
 
   aboutToAppear(): void {
     const srv: FtpServer = new FtpServer();
@@ -44,6 +46,7 @@ struct Index {
   aboutToDisappear(): void {
     const srv: FtpServer | null = this.server;
     this.server = null;
+    this.releaseKeepAlive();
     if (srv !== null) {
       srv.stop();
     }
@@ -58,6 +61,49 @@ struct Index {
     this.logLines = next;
   }
 
+  /**
+   * Without a continuous task the system freezes the page once it is in the
+   * background, and the listening socket stops answering even though the port
+   * is still open. DATA_TRANSFER is the mode that fits a file server.
+   */
+  private async acquireKeepAlive(): Promise<void> {
+    if (this.keepAlive) {
+      return;
+    }
+    try {
+      const ctx: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const info: wantAgent.WantAgentInfo = {
+        wants: [{
+          bundleName: ctx.abilityInfo.bundleName,
+          abilityName: ctx.abilityInfo.name
+        }],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      const agent = await wantAgent.getWantAgent(info);
+      await backgroundTaskManager.startBackgroundRunning(ctx, backgroundTaskManager.BackgroundMode.DATA_TRANSFER, agent);
+      this.keepAlive = true;
+      this.pushLog('后台保活已开启');
+    } catch (e) {
+      const err: Error = e as Error;
+      this.pushLog(`保活失败: ${err.message}`);
+    }
+  }
+
+  private async releaseKeepAlive(): Promise<void> {
+    if (!this.keepAlive) {
+      return;
+    }
+    this.keepAlive = false;
+    try {
+      const ctx: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await backgroundTaskManager.stopBackgroundRunning(ctx);
+    } catch (e) {
+      // Already stopped by the system: nothing to clean up.
+    }
+  }
+
   private async toggle(): Promise<void> {
     const srv: FtpServer | null = this.server;
     if (srv === null || this.busy) {
@@ -66,6 +112,7 @@ struct Index {
     this.busy = true;
     try {
       if (this.running) {
+        await this.releaseKeepAlive();
         await srv.stop();
         this.running = false;
         this.port = 0;
@@ -75,6 +122,7 @@ struct Index {
         const st: FtpStatus = await srv.start(ctx.filesDir, this.ip);
         this.running = true;
         this.port = st.port;
+        await this.acquireKeepAlive();
       }
     } catch (e) {
       const err: Error = e as Error;
