@@ -1,94 +1,103 @@
-# 手表文件传（Huawei Watch 5 · FTP 服务端）
+# Huawei Watch Files
 
-手机 ↔ 手表文件传输。手表侧跑一个 FTP 服务，**随机端口 + 随机短账号密码**，手机用任意 FTP 客户端连。
+An FTP server that runs on the watch, so a phone can copy files to and from it over Wi-Fi. Watch side only; the phone side is whatever FTP client you already have.
 
-- 设备：HUAWEI WATCH 5（`RTS-AL00`），OpenHarmony 6.1.0.125，API 23
-- 包名：`io.github.leggerezza.files`（与旧 CrownBridge 的 `com.example.myapplication` 不同，**可共存**）
-- 构建：`targetSdkVersion 26.0.0` + `compatibleSdkVersion 6.1.0(23)`
-- 代码：`entry/src/main/ets/services/{FtpServer,FsStore,NetInfo}.ets`、`pages/Index.ets`
+![Watch UI](docs/watch-ui-v1.jpeg)
 
-## 当前状态
+## Status
 
-| 项 | 状态 |
+- Device: HUAWEI WATCH 5 (`RTS-AL00`), OpenHarmony 6.1.0.125, API 23
+- Package: `io.github.leggerezza.files`
+- SDK: target 26.0.0, compatible 6.1.0(23)
+- Builds, signs and installs on the watch
+- Tested end to end on the device
+
+```
+wrong password       rejected
+LIST /               ok
+STOR 512 KB          ok
+RETR 512 KB          SHA-256 matches
+MKD RNFR RNTO DELE   ok
+```
+
+## The FTP root is the app sandbox
+
+Wearables give third-party apps no public directory. Checked from inside the app (`hilog` tag `WatchFtp`):
+
+| Path | Result |
 | --- | --- |
-| 编译 | ✅ 通过（`Build-Hap.ps1`） |
-| 签名 | ❌ **未配置**，`signingConfigs` 为空，产物是 unsigned HAP |
-| 真机安装/实测 | ⏸ 等签名后执行 `Deploy-Hap.ps1` + `Test-Ftp.ps1` |
+| `/storage/media` | missing |
+| `/storage/media/100/local/files` | missing |
+| `/storage/media/100/local/files/Docs` | missing |
+| `/storage/media/100/local/files/Download` | missing |
+| `/mnt/share` | missing |
+| `/mnt/hmdfs` | accessible, distributed FS mount, not a user directory |
+| `/data/storage/el1/bundle` | accessible, own read-only install directory |
+| `/data/storage/el2/base/haps/entry/files` | accessible, used as the FTP root |
 
-签名只差一步：DevEco Studio → `File > Project Structure > Project > Signing Configs` → 勾选 **Automatically generate signature**（需登录华为账号）→ OK。之后 `build-profile.json5` 会写入 `signingConfigs`，`Build-Hap.ps1` 自动产出 signed HAP。
+The root is `context.filesDir`. Files are removed together with the app. They cannot be written to the watch's gallery or Downloads, because there is nothing to write to; that part has to happen on the phone.
 
-## 手表没有公共目录（已实测）
+Background: [app sandbox](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/app-sandbox-directory), [getUserDownloadDir is PC/2in1 only](https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/js-apis-file-environment).
 
-在应用进程内探测（`hilog` 标签 `WatchFtp`）：`/storage/media`、`/storage/media/100/local/files/Docs`、`/storage/media/100/local/files/Download`、`/mnt/share` 全部 **missing**；只有 `/data/storage/el2/base/haps/entry/files`（应用沙箱）可写。
+## Credentials
 
-所以 FTP 根目录 = `context.filesDir`，手机传的文件都落这里，卸载应用一并清理。手表端想让文件进"系统相册/下载"是无解的，只能由手机侧 App 中转。
+Generated on every start and shown on the watch face.
 
-参考：[应用沙箱目录](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/app-sandbox-directory)、[目录环境能力（getUserDownloadDir 仅 PC/2in1）](https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/js-apis-file-environment)。
+- user: 4 lowercase letters, alphabet skips `i l o`
+- password: 6 characters, `a-z` without `i l o` plus `2-9` without `0 1`
+- control port is random too, 30000-59999, new one on every start
+- 3 wrong `PASS` on one connection: `421` and the connection closes
+- 12 wrong `PASS` in total: the server stops
+- `USER` always gets `331`, so it does not confirm the account name
+- the password is never logged
+- before login only `USER PASS QUIT FEAT SYST NOOP` are answered
 
-## 鉴权设计
+Key space is 24^4 * 31^6, about 2.9e14. That keeps port scanners and people who stumble onto the URL out. It does not stop packet capture, because FTP sends credentials in clear text. If that is the threat you care about, FTP is the wrong protocol.
 
-启动时生成一对一次性凭据，显示在表盘上：
+Why not FTPS, HTTPS or WebDAV: [docs/protocol-assessment.md](docs/protocol-assessment.md).
 
-```
-账号：4 位小写字母（去除 i l o）
-密码：6 位（a-z 去 i l o，加 2-9 去 0 1）
-```
-
-- 每次"启动服务"重新生成，和随机端口（30000–59999）一起变
-- 单连接错 3 次 → `421` 断开；全局累计错 12 次 → 服务器自动停
-- `USER` 一律回 `331`，不泄露账号是否存在；密码不写日志
-- 未登录时仅放行 `USER/PASS/QUIT/FEAT/SYST/NOOP`
-
-为什么不上 FTPS / HTTPS / WebDAV：见 [docs/protocol-assessment.md](docs/protocol-assessment.md)（含 SDK 实测依据）。
-
-## 已实现的 FTP 命令
+## Commands
 
 `USER PASS SYST FEAT OPTS PWD CWD CDUP TYPE MODE STRU PASV EPSV LIST NLST MLSD MLST RETR STOR APPE REST SIZE MDTM DELE MKD RMD RNFR RNTO NOOP ABOR STAT ALLO QUIT`
 
-- 被动模式 `PASV`(227) + `EPSV`(229)；主动 `PORT/EPRT` 明确 `502`
-- 路径先归一化，`..` 在虚拟根被钳制，逃不出沙箱
-- 单连接命令串行化，数据通道与命令不交错
+- passive mode only: `PASV` (227) and `EPSV` (229); `PORT` and `EPRT` get `502`
+- client paths are normalised and `..` is clamped at the virtual root
+- commands on one connection run in order, so a transfer cannot interleave with the next command
 
-## 使用
+## Build, install, test
 
 ```powershell
-# 1. 构建（首次 ~15s）
 powershell -ExecutionPolicy Bypass -File .\Build-Hap.ps1
-
-# 2. 安装并启动（自动等待手表上线）
-powershell -ExecutionPolicy Bypass -File .\Deploy-Hap.ps1
-
-# 3. 端到端自测：错误密码必须被拒 → 上传 → 下载 → SHA256 → 改名/删除
-powershell -ExecutionPolicy Bypass -File .\Test-Ftp.ps1 `
-    -WatchIp 192.168.137.91 -Port 33124 -User abcd -Pass k7x9qm
+powershell -ExecutionPolicy Bypass -File .\Deploy-Hap.ps1 -Device 192.168.137.223:42295
+powershell -ExecutionPolicy Bypass -File .\Test-Ftp.ps1 -WatchIp 192.168.137.223 -Port 56783 -User mfic -Pass pws8v6
 ```
 
-端口和账号密码以手表屏幕为准（每次启动都变），也可以读日志：
+Port and credentials change on every start. To read them without looking at the watch:
 
 ```powershell
-hdc -t 192.168.137.91:44219 shell "hilog -x | grep WatchFtp | tail -3"
+hdc -t <serial> shell "hilog -x | grep WatchFtp | grep listening | tail -1"
 ```
 
-手机侧：连 `ftp://<手表IP>:<端口>`，填表盘上的账号密码。
+Signing uses DevEco automatic signing. `build-profile.json5` holds the resulting config with encrypted, machine-bound passwords; on another machine, turn automatic signing on again.
 
-## 目录
+## Layout
 
 ```
-Files/
-├─ Build-Hap.ps1          # 构建
-├─ Deploy-Hap.ps1         # 等设备 → 安装 → 启动
-├─ Test-Ftp.ps1           # 端到端自测（含错误密码拒登）
-├─ docs/protocol-assessment.md
-└─ entry/src/main/
-   ├─ module.json5        # wearable + INTERNET / GET_NETWORK_INFO
-   └─ ets/
-      ├─ pages/Index.ets  # 466×466 表盘 UI
-      └─ services/        # FtpServer / FsStore / NetInfo
+entry/src/main/ets/services/FtpServer.ets   protocol, sockets, passive data channel
+entry/src/main/ets/services/FsStore.ets     sandbox file access, path clamping
+entry/src/main/ets/services/NetInfo.ets     picks the Wi-Fi IPv4 for display
+entry/src/main/ets/pages/Index.ets          466x466 UI
+Build-Hap.ps1 Deploy-Hap.ps1 Test-Ftp.ps1
+tools/Start-Hotspot.ps1                     revives the Windows mobile hotspot
 ```
 
-## 未做 / 下一步
+## Not done
 
-1. **后台保活**：现在依赖页面在前台，熄屏可能断连。要传大文件需 `backgroundTaskManager` 的 `DATA_TRANSFER` 长时任务 + `ohos.permission.KEEP_BACKGROUND_RUNNING`。
-2. **HTTP 门户**（浏览器零安装）与 **WebDAV**（文件管理器挂载），见评估文档。
-3. **免输入**：手表弹窗授权 IP / 显示二维码。
-4. 手机端 App（选文件、进度、断点续传）。
+- No background task. The server lives while the page is in front, so the screen going off can kill a long transfer. Needs `backgroundTaskManager` with `DATA_TRANSFER` and `ohos.permission.KEEP_BACKGROUND_RUNNING`.
+- No phone app. The phone side is a third-party FTP client.
+- No HTTP portal or WebDAV yet; see the assessment doc.
+- UI strings are Chinese.
+
+## Windows note
+
+Windows 11 turns the mobile hotspot off when no device has been connected for a while. The watch then sleeps, cannot rejoin, and hdc stays offline until the hotspot is back. `tools/Start-Hotspot.ps1` starts it through the WinRT tethering API.
