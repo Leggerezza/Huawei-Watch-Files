@@ -1,0 +1,34 @@
+# ---- HarmonyOS / DevEco build output ----
+build/
+entry/build/
+.hvigor/
+.cxx/
+*.hap
+*.har
+*.hsp
+*.app
+
+# ---- dependencies ----
+oh_modules/
+entry/oh_modules/
+
+# ---- IDE ----
+.idea/
+*.iml
+.vscode/
+
+# ---- local machine config ----
+local.properties
+
+# ---- signing material (never commit) ----
+*.p12
+*.p7b
+*.cer
+*.csr
+*.key
+*.keystore
+
+# ---- misc ----
+*.log
+.DS_Store
+Thumbs.db

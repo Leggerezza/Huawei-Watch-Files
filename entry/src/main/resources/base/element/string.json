@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "手表 FTP 文件传输服务"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "在手表上开启 FTP 服务，供手机上传下载文件"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "手表文件传"
+    }
+  ]
+}
