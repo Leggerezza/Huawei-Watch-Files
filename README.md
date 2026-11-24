@@ -113,7 +113,7 @@ tools/Start-Hotspot.ps1                     revives the Windows mobile hotspot
 - No HTTP portal or WebDAV yet; see the assessment doc.
 - UI strings are Chinese.
 
-Deep sleep: the continuous task keeps the process and the socket alive, but after long idle the watch may drop off Wi-Fi anyway (it stops answering ping until the screen is woken). That is a radio power decision, not something the app controls.
+Deep sleep: the continuous task keeps the process and the socket alive, and an active transfer keeps the Wi-Fi radio up — the full suite ran with the display suspended. What does not survive is idle time: once the screen is off and there is no traffic, the watch drops off Wi-Fi entirely (it stops answering ping) until the screen is woken. That is a radio power policy, not something the app controls, so start a transfer while the watch is awake.
 
 ## Windows note
 
