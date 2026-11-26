@@ -41,11 +41,16 @@ class FtpSession {
   userTried: string = '';
   authed: boolean = false;
   failCount: number = 0;
+  lastActive: number = 0;
   // passive listener + the single data connection it accepts
   pasv: socket.TCPSocketServer | null = null;
   pasvPort: number = 0;
   pending: socket.TCPSocketConnection | null = null;
   waiter: ((c: socket.TCPSocketConnection | null) => void) | null = null;
+  /** Chunks that arrived on the passive connection before a sink was set. */
+  dataIn: ArrayBuffer[] = [];
+  dataClosed: boolean = false;
+  onData: ((buf: ArrayBuffer) => void) | null = null;
   dead: boolean = false;
 }
 
@@ -63,16 +68,21 @@ export class FtpServer {
   private store: FsStore = new FsStore('');
   private classifier: Classifier = new Classifier('');
   /**
-   * When true, a file uploaded straight into the FTP root is filed into a
-   * type bucket (Images/, Videos/, ...). Files uploaded to an explicit path
-   * are always left alone.
+   * FTP keeps the client's path by default: a client that uploads /photo.jpg
+   * and then asks SIZE /photo.jpg must still find it. Filing is therefore an
+   * HTTP-side convenience (see HttpServer), switchable here for local use.
    */
-  private classifyRootUploads: boolean = true;
+  private classifyRootUploads: boolean = false;
+  /** Refuse further control connections above this many open sessions. */
+  private readonly maxSessions: number = 8;
+  /** Drop a control connection that sends nothing for this long. */
+  private readonly idleTimeoutMs: number = 10 * 60 * 1000;
   private sessions: FtpSession[] = [];
   private decoder: util.TextDecoder = util.TextDecoder.create('utf-8');
   private encoder: util.TextEncoder = new util.TextEncoder();
   private nextId: number = 1;
   private port: number = 0;
+  private sweepTimer: number = -1;
   private localIp: string = '127.0.0.1';
   private userName: string = '';
   private password: string = '';
@@ -113,9 +123,9 @@ export class FtpServer {
     this.store = new FsStore(root);
     this.store.ensureRoot();
     this.classifier = new Classifier(this.store.root);
-    if (this.classifyRootUploads) {
-      this.classifier.ensureBuckets();
-    }
+    // The buckets always exist so the file browser has a stable layout; whether
+    // FTP *moves* uploads into them is a separate policy flag.
+    this.classifier.ensureBuckets();
     this.localIp = localIp.length > 0 ? localIp : '127.0.0.1';
     this.probePaths();
     this.failTimes = [];
@@ -135,6 +145,9 @@ export class FtpServer {
       this.server = srv;
       this.port = candidate;
       this.bindServer(srv);
+      this.sweepTimer = setInterval(() => {
+        this.sweepIdle();
+      }, 60000);
       this.log(`listening on 0.0.0.0:${candidate}, root=${root}, user=${this.userName}`);
       const st: FtpStatus = this.status();
       this.onStatus(st);
@@ -144,6 +157,10 @@ export class FtpServer {
   }
 
   async stop(): Promise<void> {
+    if (this.sweepTimer >= 0) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = -1;
+    }
     const list: FtpSession[] = this.sessions.slice(0);
     for (let i = 0; i < list.length; i++) {
       await this.dropSession(list[i]);
@@ -164,6 +181,24 @@ export class FtpServer {
     this.port = 0;
     this.log('stopped');
     this.onStatus(this.status());
+  }
+
+  /** Drops control connections that have been silent for too long. */
+  private sweepIdle(): void {
+    const now: number = Date.now();
+    const snapshot: FtpSession[] = this.sessions.slice(0);
+    for (let i = 0; i < snapshot.length; i++) {
+      const s: FtpSession = snapshot[i];
+      if (s.dead || s.lastActive === 0) {
+        continue;
+      }
+      if (now - s.lastActive > this.idleTimeoutMs) {
+        this.log(`#${s.id} idle timeout, closing`);
+        this.reply(s, '421 Idle timeout.').then(() => {
+          this.dropSession(s);
+        });
+      }
+    }
   }
 
   private randomPort(): number {
@@ -192,17 +227,13 @@ export class FtpServer {
   }
 
   private randomBytes(count: number): number[] {
+    // Fail closed on purpose: falling back to Math.random here would silently
+    // turn the access credentials into something guessable.
+    const rnd: cryptoFramework.Random = cryptoFramework.createRandom();
+    const blob: cryptoFramework.DataBlob = rnd.generateRandomSync(count);
     const out: number[] = [];
-    try {
-      const rnd: cryptoFramework.Random = cryptoFramework.createRandom();
-      const blob: cryptoFramework.DataBlob = rnd.generateRandomSync(count);
-      for (let i = 0; i < blob.data.length; i++) {
-        out.push(blob.data[i]);
-      }
-    } catch (e) {
-      for (let i = 0; i < count; i++) {
-        out.push(Math.floor(Math.random() * 256));
-      }
+    for (let i = 0; i < blob.data.length; i++) {
+      out.push(blob.data[i]);
     }
     return out;
   }
@@ -297,10 +328,24 @@ export class FtpServer {
   // ------------------------------------------------------------ control layer
 
   private onClient(client: socket.TCPSocketConnection): void {
+    if (this.sessions.length >= this.maxSessions) {
+      const over: string = '421 Too many connections, try again later.\r\n';
+      client.send({ data: over }).catch(() => {
+      });
+      setTimeout(() => {
+        try {
+          client.close();
+        } catch (e) {
+        }
+      }, 200);
+      this.log(`rejected connection: ${this.sessions.length} sessions open`);
+      return;
+    }
     const s: FtpSession = new FtpSession();
     s.id = this.nextId;
     this.nextId = this.nextId + 1;
     s.conn = client;
+    s.lastActive = Date.now();
     this.sessions.push(s);
     this.log(`#${s.id} connected`);
     this.onStatus(this.status());
@@ -318,6 +363,7 @@ export class FtpServer {
     if (s.dead) {
       return;
     }
+    s.lastActive = Date.now();
     let text: string = '';
     try {
       text = this.decoder.decodeToString(new Uint8Array(info.message));
@@ -707,20 +753,24 @@ export class FtpServer {
     }
     const file: fs.File = opened;
 
-    // Attach the sink before answering 150: a client is free to write and
-    // close the moment it sees 150, and anything that arrives before the
-    // listener exists is lost (observed as an APPE that stored 0 bytes).
     let total: number = 0;
     let failed: boolean = false;
-    data.on('message', (info: socket.SocketMessageInfo) => {
+    s.onData = (buf: ArrayBuffer) => {
       try {
-        const n: number = fs.writeSync(file.fd, info.message);
+        const n: number = fs.writeSync(file.fd, buf);
         total = total + n;
       } catch (e) {
         failed = true;
         this.log(`#${s.id} STOR write failed: ${this.errText(e)}`);
       }
-    });
+    };
+    // Whatever the client sent before this command was parsed is queued.
+    for (let i = 0; i < s.dataIn.length; i++) {
+      if (s.onData !== null) {
+        s.onData(s.dataIn[i]);
+      }
+    }
+    s.dataIn = [];
 
     const closed: Promise<void> = new Promise<void>((resolve: () => void) => {
       let settled: boolean = false;
@@ -730,6 +780,9 @@ export class FtpServer {
           resolve();
         }
       };
+      if (s.dataClosed) {
+        finish();
+      }
       data.on('close', () => {
         finish();
       });
@@ -786,6 +839,21 @@ export class FtpServer {
     }
 
     srv.on('connect', (client: socket.TCPSocketConnection) => {
+      // Attach the collector here, not in the transfer handler: a client may
+      // write its whole payload and close before the command is even parsed,
+      // and bytes buffered by the socket layer are lost once it is closed.
+      s.dataIn = [];
+      s.dataClosed = false;
+      client.on('message', (info: socket.SocketMessageInfo) => {
+        if (s.onData !== null) {
+          s.onData(info.message);
+        } else if (s.dataIn.length < 256) {
+          s.dataIn.push(info.message);
+        }
+      });
+      client.on('close', () => {
+        s.dataClosed = true;
+      });
       s.pending = client;
       const waiter: ((c: socket.TCPSocketConnection | null) => void) | null = s.waiter;
       if (waiter !== null) {
@@ -853,6 +921,9 @@ export class FtpServer {
   }
 
   private async endData(s: FtpSession, data: socket.TCPSocketConnection | null): Promise<void> {
+    s.onData = null;
+    s.dataIn = [];
+    s.dataClosed = false;
     if (data !== null) {
       try {
         await data.close();

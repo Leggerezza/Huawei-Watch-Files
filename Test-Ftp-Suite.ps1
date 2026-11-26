@@ -61,7 +61,9 @@ function Read-Reply {
 function New-Control {
     $c = New-Object System.Net.Sockets.TcpClient
     $c.Connect($WatchIp, $Port)
-    $c.ReceiveTimeout = 8000
+    # A control connection can stay silent for the whole duration of a large
+    # transfer, so this must be much longer than one data transfer.
+    $c.ReceiveTimeout = 120000
     $s = $c.GetStream()
     # The server speaks UTF-8 (advertised in FEAT), so path arguments must be
     # encoded as UTF-8 too; ASCII would turn a Chinese name into '?'.
@@ -379,56 +381,30 @@ foreach ($b in @('Images', 'Videos', 'Audio', 'Documents', 'Archives', 'Others')
 }
 Check 'all six buckets are present' $bucketsOk
 
-Write-Host "`n=== 15. automatic filing of root uploads ===" -ForegroundColor Cyan
-# PNG bytes under a name with no extension: only magic can classify this.
+Write-Host "`n=== 15. FTP keeps client paths (filing is HTTP-only) ===" -ForegroundColor Cyan
+# Policy from stage 8.1: FTP must never move a file away from the path the
+# client named, otherwise a follow-up SIZE/RETR on that path breaks.
 $png = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0)
 $up = Invoke-Upload $c 'noext' $png
-Check 'root upload reports its filed path' ($up.End -like '*Stored as /Images/noext*') $up.End
-$r = @(Send-Cmd $c 'SIZE /Images/noext')
-Check 'SIZE finds it under /Images' ($r[-1] -eq ("213 " + $png.Length)) $r[-1]
+Check 'root upload does not report a different path' ($up.End -notlike '*Stored as*') $up.End
 $r = @(Send-Cmd $c 'SIZE /noext')
-Check 'the original root path no longer exists' ($r[-1] -like '550*') $r[-1]
-
-$up = Invoke-Upload $c 'noext' $png
-Check 'a second upload gets a collision-safe name' ($up.End -like '*Stored as /Images/noext (1)*') $up.End
-$r = @(Send-Cmd $c 'SIZE /Images/noext (1)')
-Check 'the renamed copy is readable' ($r[-1] -eq ("213 " + $png.Length)) $r[-1]
+Check 'the file stays at the path the client used' ($r[-1] -eq ("213 " + $png.Length)) $r[-1]
+$r = @(Send-Cmd $c 'SIZE /Images/noext')
+Check 'nothing was filed into /Images' ($r[-1] -like '550*') $r[-1]
+$null = Send-Cmd $c 'DELE /noext'
 
 $pdf = [byte[]](0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34)
 $null = Invoke-Upload $c 'report.pdf' $pdf
-$r = @(Send-Cmd $c 'SIZE /Documents/report.pdf')
-Check 'a .pdf lands in /Documents' ($r[-1] -eq ("213 " + $pdf.Length)) $r[-1]
-
-$zip = [byte[]](0x50, 0x4B, 0x03, 0x04, 0x14, 0x00)
-$null = Invoke-Upload $c 'bundle.zip' $zip
-$r = @(Send-Cmd $c 'SIZE /Archives/bundle.zip')
-Check 'a .zip lands in /Archives' ($r[-1] -eq ("213 " + $zip.Length)) $r[-1]
+$r = @(Send-Cmd $c 'SIZE /report.pdf')
+Check 'a .pdf also stays in the root' ($r[-1] -eq ("213 " + $pdf.Length)) $r[-1]
+$null = Send-Cmd $c 'DELE /report.pdf'
 
 $mp4 = [byte[]](0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32)
-$null = Invoke-Upload $c 'clip.mp4' $mp4
-$r = @(Send-Cmd $c 'SIZE /Videos/clip.mp4')
-Check 'an .mp4 lands in /Videos' ($r[-1] -eq ("213 " + $mp4.Length)) $r[-1]
-
-$mp3 = [byte[]](0x49, 0x44, 0x33, 0x03, 0x00)
-$null = Invoke-Upload $c 'song.mp3' $mp3
-$r = @(Send-Cmd $c 'SIZE /Audio/song.mp3')
-Check 'an .mp3 lands in /Audio' ($r[-1] -eq ("213 " + $mp3.Length)) $r[-1]
-
-$blob = [byte[]](0x01, 0x02, 0x03, 0x04, 0x05, 0x06)
-$null = Invoke-Upload $c 'blob.bin' $blob
-$r = @(Send-Cmd $c 'SIZE /Others/blob.bin')
-Check 'an unknown file lands in /Others' ($r[-1] -eq ("213 " + $blob.Length)) $r[-1]
-
-$null = Send-Cmd $c 'CWD /Documents'
-$null = Invoke-Upload $c 'keep.txt' ([Text.Encoding]::ASCII.GetBytes('keep'))
-$r = @(Send-Cmd $c 'SIZE keep.txt')
-Check 'an explicit subdirectory upload is not moved' ($r[-1] -eq '213 4') $r[-1]
-$null = Send-Cmd $c 'CWD /'
-
-foreach ($p in @('/Images/noext', '/Images/noext (1)', '/Documents/report.pdf', '/Archives/bundle.zip',
-        '/Videos/clip.mp4', '/Audio/song.mp3', '/Others/blob.bin', '/Documents/keep.txt')) {
-    $null = Send-Cmd $c "DELE $p"
-}
+$up = Invoke-Upload $c 'clip.mp4' $mp4
+Check 'a .mp4 is not moved to /Videos' ($up.End -notlike '*Stored as*') $up.End
+$r = @(Send-Cmd $c 'SIZE /clip.mp4')
+Check 'the .mp4 is readable at the client path' ($r[-1] -eq ("213 " + $mp4.Length)) $r[-1]
+$null = Send-Cmd $c 'DELE /clip.mp4'
 
 $r = @(Send-Cmd $c 'QUIT')
 Check 'control connection closes cleanly' ($r[-1] -like '221*') $r[-1]

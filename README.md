@@ -1,8 +1,8 @@
 # Huawei Watch Files
 
-An FTP server that runs on the watch, so a phone can copy files to and from it over Wi-Fi. Watch side only; the phone side is whatever FTP client you already have.
+A file server that runs on the watch: FTP for clients that speak it, and a browser page for phones that do not. Watch side only.
 
-![Watch UI](docs/watch-ui-v1.jpeg)
+![Watch UI](docs/watch-ui-v2.jpeg)
 
 ## Status
 
@@ -10,14 +10,13 @@ An FTP server that runs on the watch, so a phone can copy files to and from it o
 - Package: `io.github.leggerezza.files`
 - SDK: target 26.0.0, compatible 6.1.0(23)
 - Builds, signs and installs on the watch
-- Tested end to end on the device, including with the screen off
+- FTP: 65 protocol checks pass on the device
+- HTTP: 22 protocol checks pass on the device
+- Background execution: **not granted** by the system (`9800005`), see below
 
 ```
-wrong password       rejected
-LIST /               ok
-STOR 512 KB          ok
-RETR 512 KB          SHA-256 matches
-MKD RNFR RNTO DELE   ok
+FTP   wrong password rejected, 8 MB up 1.5 MB/s, down 3.7 MB/s, SHA-256 equal
+HTTP  401 without session, login, upload, download + Range, mkdir/rename/delete
 ```
 
 ## The FTP root is the app sandbox
@@ -57,7 +56,20 @@ Key space is 24^4 * 31^6, about 2.9e14. That keeps port scanners and people who 
 
 Why not FTPS, HTTPS or WebDAV: [docs/protocol-assessment.md](docs/protocol-assessment.md).
 
-## Commands
+## Web browser
+
+Both servers start together. The watch face shows two lines:
+
+```
+FTP  52934  account qanx  password 3hhp2k
+web  40964  access code e50a8f
+```
+
+Open `http://<watch-ip>:<web-port>/` on any phone, tablet or PC on the same network, enter the access code once, and you get a file browser: list, upload with a progress bar, download, create folder, rename, delete. Nothing to install, and the page has no external assets so it works on a LAN with no internet.
+
+Details and the protocol subset: [docs/http-server-design.md](docs/http-server-design.md).
+
+## FTP commands
 
 `USER PASS SYST FEAT OPTS PWD CWD CDUP TYPE MODE STRU PASV EPSV LIST NLST MLSD MLST RETR STOR APPE REST SIZE MDTM DELE MKD RMD RNFR RNTO NOOP ABOR STAT ALLO QUIT`
 
@@ -67,37 +79,52 @@ Why not FTPS, HTTPS or WebDAV: [docs/protocol-assessment.md](docs/protocol-asses
 
 ## Tests
 
-`Test-Ftp-Suite.ps1` talks to the server over a raw control connection and hand-built passive data channels. 72 checks: pre-auth gate, credential handling, path-traversal clamping, unicode file names, SIZE/MDTM/MLSD, APPE, REST resume, directory semantics, rename, an 8 MB transfer compared by SHA-256, two concurrent clients, automatic filing of root uploads, and the login cooldown.
+Two end-to-end suites, both run against the real device.
+
+`Test-Ftp-Suite.ps1` speaks FTP over a raw control connection and hand-built passive data channels: 65 checks covering the pre-auth gate, credential handling, traversal clamping, unicode names, SIZE/MDTM/MLSD, APPE, REST resume, directory semantics, rename, an 8 MB transfer compared by SHA-256, two concurrent clients, and the client-path policy.
+
+`Test-Http.ps1` drives the browser service with curl and a cookie jar: 22 checks covering the 401 gate, login, CSRF (a forged token must get 403), upload/download with SHA-256, Range, mkdir/rename/delete, traversal and chunked-body rejection.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Test-Ftp-Suite.ps1 -WatchIp 192.168.137.223 -Port 54920 -User mqpq -Pass d9eh8h -LargeMb 8
-# add -TestLockout to also drive the 30 s cooldown (takes ~35 s longer)
+powershell -ExecutionPolicy Bypass -File .\Test-Ftp-Suite.ps1 -WatchIp <ip> -Port <ftp> -User <u> -Pass <p> -LargeMb 8
+powershell -ExecutionPolicy Bypass -File .\Test-Http.ps1 -WatchIp <ip> -Port <http> -Code <code>
+# add -TestLockout to the FTP suite to drive the 30 s cooldown (takes ~35 s longer)
 ```
 
-Last run: 72/72, 8 MB up at 2.0 MB/s and down at 2.2 MB/s, SHA-256 equal.
+Last run: FTP 65/65, HTTP 22/22. 8 MB over FTP: 1.5 MB/s up, 3.7 MB/s down, SHA-256 equal.
 
 ## Storage layout
 
-Six buckets live at the FTP root: `Images`, `Videos`, `Audio`, `Documents`, `Archives`, `Others`. A file uploaded **straight into the root** is filed into its bucket when the transfer completes, and the `226` reply names the final path. A file uploaded to an explicit path is left alone. Type comes from the extension, falling back to magic bytes when the name says nothing. Name collisions become `name (1).ext`.
+Six buckets live at the root: `Images`, `Videos`, `Audio`, `Documents`, `Archives`, `Others`. They always exist, so the browser has a stable layout.
 
-This trades path fidelity for a browsable tree: `STOR photo.jpg` ends up at `/Images/photo.jpg`, so a client that asks for `/photo.jpg` afterwards gets `550`. That is why it only applies to root uploads. Details and the alternatives that were rejected: [docs/storage-layout.md](docs/storage-layout.md).
+Filing is a policy, not a filesystem rule:
 
-## Background execution
+- **HTTP** uploads that land directly in the root are moved into their bucket, and the JSON reply names the final path.
+- **FTP** uploads are never moved. A client that names a path must be able to find the file at that path afterwards; silently relocating it breaks `SIZE`, `RETR` and resume. The switch is `classifyRootUploads` in `FtpServer.ets`.
 
-The page starts a `DATA_TRANSFER` continuous task when the server starts, and stops it when the server stops. Without it the system freezes the page as soon as it is in the background and the listening socket stops answering even though the port stays open. Verified by suspending the display (`power-shell suspend`) and running the whole suite against it.
+Type detection is extension first, magic bytes only when the name has no useful extension. Details: [docs/storage-layout.md](docs/storage-layout.md).
+
+## Background execution: not granted
+
+The app asks for a `DATA_TRANSFER` continuous task when it starts serving. On this watch the request fails with `BusinessError 9800005 - Continuous task verification failed`, so the app does **not** have background protection. Practical consequence: transfers work while the page is on screen, and the process can be reaped after it is backgrounded.
+
+An earlier version of this README claimed the suite had passed with the display suspended, and treated that as proof. It was not: the process simply had not been frozen yet.
+
+Deep sleep is a separate matter: once the screen is off and there is no traffic, the watch drops off Wi-Fi entirely (no ping) until it is woken. That is a radio power policy and is not controllable from the app.
 
 ## Build, install, test
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Build-Hap.ps1
-powershell -ExecutionPolicy Bypass -File .\Deploy-Hap.ps1 -Device 192.168.137.223:42295
-powershell -ExecutionPolicy Bypass -File .\Test-Ftp.ps1 -WatchIp 192.168.137.223 -Port 56783 -User mfic -Pass pws8v6
+powershell -ExecutionPolicy Bypass -File .\Deploy-Hap.ps1 -Device <ip:port>
+powershell -ExecutionPolicy Bypass -File .\Test-Ftp-Suite.ps1 -WatchIp <ip> -Port <ftp> -User <u> -Pass <p>
+powershell -ExecutionPolicy Bypass -File .\Test-Http.ps1 -WatchIp <ip> -Port <http> -Code <code>
 ```
 
-Port and credentials change on every start. To read them without looking at the watch:
+Ports and credentials change on every start. Both are printed by hilog, except the HTTP access code which is on the watch face only:
 
 ```powershell
-hdc -t <serial> shell "hilog -x | grep WatchFtp | grep listening | tail -1"
+hdc -t <serial> shell "hilog -x | grep -E 'WatchFtp|WatchHttp' | grep listening"
 ```
 
 Signing uses DevEco automatic signing. `build-profile.json5` holds the resulting config with encrypted, machine-bound passwords; on another machine, turn automatic signing on again.
@@ -105,22 +132,24 @@ Signing uses DevEco automatic signing. `build-profile.json5` holds the resulting
 ## Layout
 
 ```
-entry/src/main/ets/services/FtpServer.ets     protocol, sockets, passive data channel
+entry/src/main/ets/services/FtpServer.ets     FTP protocol, passive data channel
+entry/src/main/ets/services/HttpServer.ets    HTTP/1.1 subset, sessions, streaming
+entry/src/main/ets/services/WebUi.ets         server-rendered browser page
 entry/src/main/ets/services/FsStore.ets       sandbox file access, path clamping
 entry/src/main/ets/services/Classifier.ets    type buckets, extension + magic sniffing
 entry/src/main/ets/services/NetInfo.ets       picks the Wi-Fi IPv4 for display
-entry/src/main/ets/pages/Index.ets            466x466 UI
-Build-Hap.ps1 Deploy-Hap.ps1 Test-Ftp.ps1 Test-Ftp-Suite.ps1
+entry/src/main/ets/pages/Index.ets            466x466 UI, service lifecycle
+Build-Hap.ps1 Deploy-Hap.ps1 Test-Ftp-Suite.ps1 Test-Http.ps1
+docs/                                         audit, architecture, designs, reports
 tools/Start-Hotspot.ps1                       revives the Windows mobile hotspot
 ```
 
 ## Not done
 
-- No phone app. The phone side is a third-party FTP client.
-- No HTTP portal or WebDAV yet; see the assessment doc.
+- No watch-side file manager, image viewer, audio player, video player or text reader yet. See [docs/development-roadmap.md](docs/development-roadmap.md).
+- No FFmpeg probe project yet. Nothing in this repo includes or claims FFmpeg.
+- No WebDAV, no HTTPS/FTPS.
 - UI strings are Chinese.
-
-Deep sleep: the continuous task keeps the process and the socket alive, and an active transfer keeps the Wi-Fi radio up — the full suite ran with the display suspended. What does not survive is idle time: once the screen is off and there is no traffic, the watch drops off Wi-Fi entirely (it stops answering ping) until the screen is woken. That is a radio power policy, not something the app controls, so start a transfer while the watch is awake.
 
 ## Windows note
 

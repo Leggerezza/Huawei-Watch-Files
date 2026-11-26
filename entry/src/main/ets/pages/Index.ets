@@ -1,6 +1,7 @@
 import { common, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { FtpServer, FtpStatus } from '../services/FtpServer';
+import { HttpServer, HttpStatus } from '../services/HttpServer';
 import { getLocalIpv4 } from '../services/NetInfo';
 
 function two(n: number): string {
@@ -13,29 +14,39 @@ struct Index {
   @State running: boolean = false;
   @State busy: boolean = false;
   @State ip: string = '0.0.0.0';
-  @State port: number = 0;
-  @State account: string = '';
-  @State password: string = '';
+  @State ftpPort: number = 0;
+  @State ftpUser: string = '';
+  @State ftpPass: string = '';
+  @State httpPort: number = 0;
+  @State httpCode: string = '';
   @State clients: number = 0;
   @State logLines: string[] = [];
 
-  private server: FtpServer | null = null;
+  private ftp: FtpServer | null = null;
+  private http: HttpServer | null = null;
   private keepAlive: boolean = false;
 
   aboutToAppear(): void {
-    const srv: FtpServer = new FtpServer();
-    srv.onStatus = (st: FtpStatus) => {
-      this.running = st.running;
-      this.port = st.port;
+    const ftp: FtpServer = new FtpServer();
+    ftp.onStatus = (st: FtpStatus) => {
+      this.running = st.running || (this.http !== null && this.http.isRunning());
+      this.ftpPort = st.port;
+      this.ftpUser = st.user;
+      this.ftpPass = st.pass;
       this.clients = st.clients;
-      this.account = st.user;
-      this.password = st.pass;
     };
-    srv.onLog = (msg: string) => {
-      const now: Date = new Date();
-      this.pushLog(`${two(now.getHours())}:${two(now.getMinutes())}:${two(now.getSeconds())} ${msg}`);
+    ftp.onLog = (msg: string) => this.pushLog(msg);
+    this.ftp = ftp;
+
+    const http: HttpServer = new HttpServer();
+    http.onStatus = (st: HttpStatus) => {
+      this.httpPort = st.port;
+      this.httpCode = st.code;
+      this.running = st.running || (this.ftp !== null && this.ftp.isRunning());
     };
-    this.server = srv;
+    http.onLog = (msg: string) => this.pushLog(msg);
+    this.http = http;
+
     getLocalIpv4().then((value: string) => {
       this.ip = value;
       // Serve as soon as the page is up: opening the app is the user intent.
@@ -44,28 +55,29 @@ struct Index {
   }
 
   aboutToDisappear(): void {
-    const srv: FtpServer | null = this.server;
-    this.server = null;
+    const ftp: FtpServer | null = this.ftp;
+    const http: HttpServer | null = this.http;
+    this.ftp = null;
+    this.http = null;
     this.releaseKeepAlive();
-    if (srv !== null) {
-      srv.stop();
+    if (ftp !== null) {
+      ftp.stop();
+    }
+    if (http !== null) {
+      http.stop();
     }
   }
 
   private pushLog(line: string): void {
+    const now: Date = new Date();
     const next: string[] = this.logLines.slice(0);
-    next.push(line);
+    next.push(`${two(now.getHours())}:${two(now.getMinutes())}:${two(now.getSeconds())} ${line}`);
     while (next.length > 4) {
       next.shift();
     }
     this.logLines = next;
   }
 
-  /**
-   * Without a continuous task the system freezes the page once it is in the
-   * background, and the listening socket stops answering even though the port
-   * is still open. DATA_TRANSFER is the mode that fits a file server.
-   */
   private async acquireKeepAlive(): Promise<void> {
     if (this.keepAlive) {
       return;
@@ -100,28 +112,43 @@ struct Index {
       const ctx: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
       await backgroundTaskManager.stopBackgroundRunning(ctx);
     } catch (e) {
-      // Already stopped by the system: nothing to clean up.
     }
   }
 
   private async toggle(): Promise<void> {
-    const srv: FtpServer | null = this.server;
-    if (srv === null || this.busy) {
+    const ftp: FtpServer | null = this.ftp;
+    const http: HttpServer | null = this.http;
+    if (ftp === null || http === null || this.busy) {
       return;
     }
     this.busy = true;
     try {
       if (this.running) {
         await this.releaseKeepAlive();
-        await srv.stop();
+        await ftp.stop();
+        await http.stop();
         this.running = false;
-        this.port = 0;
+        this.ftpPort = 0;
+        this.httpPort = 0;
       } else {
         const ctx: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
         this.ip = await getLocalIpv4();
-        const st: FtpStatus = await srv.start(ctx.filesDir, this.ip);
-        this.running = true;
-        this.port = st.port;
+        try {
+          const st: FtpStatus = await ftp.start(ctx.filesDir, this.ip);
+          this.ftpPort = st.port;
+        } catch (e) {
+          const err: Error = e as Error;
+          this.pushLog(`FTP 启动失败: ${err.message}`);
+        }
+        try {
+          const st: HttpStatus = await http.start(ctx.filesDir, this.ip);
+          this.httpPort = st.port;
+          this.httpCode = st.code;
+        } catch (e) {
+          const err: Error = e as Error;
+          this.pushLog(`HTTP 启动失败: ${err.message}`);
+        }
+        this.running = ftp.isRunning() || http.isRunning();
         await this.acquireKeepAlive();
       }
     } catch (e) {
@@ -133,68 +160,72 @@ struct Index {
   }
 
   build() {
-    Column({ space: 6 }) {
-      Text('手表 FTP')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
+    Scroll() {
+      Column({ space: 4 }) {
+        Text('手表文件传')
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
 
-      Row({ space: 4 }) {
-        Text('●')
+        Row({ space: 4 }) {
+          Text('●')
+            .fontSize(10)
+            .fontColor(this.running ? '#4ADE80' : '#9CA3AF')
+          Text(this.running ? '运行中' : '已停止')
+            .fontSize(11)
+            .fontColor(this.running ? '#4ADE80' : '#9CA3AF')
+        }
+
+        Text(this.ip)
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .maxLines(1)
+
+        Text(this.ftpPort > 0 ? `FTP ${this.ftpPort}  账号 ${this.ftpUser}  密码 ${this.ftpPass}` : 'FTP 未启动')
           .fontSize(11)
-          .fontColor(this.running ? '#4ADE80' : '#9CA3AF')
-        Text(this.running ? '运行中' : '已停止')
-          .fontSize(12)
-          .fontColor(this.running ? '#4ADE80' : '#9CA3AF')
-      }
+          .fontColor('#93C5FD')
+          .maxLines(1)
 
-      Text(this.ip)
-        .fontSize(20)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#FFFFFF')
-        .maxLines(1)
+        Text(this.httpPort > 0 ? `网页 ${this.httpPort}  访问码 ${this.httpCode}` : '网页未启动')
+          .fontSize(11)
+          .fontColor('#FDE68A')
+          .maxLines(1)
 
-      Text(this.running ? `端口 ${this.port}` : '随机端口 · 随机账号')
-        .fontSize(13)
-        .fontColor('#93C5FD')
+        Button(this.running ? '停止服务' : '启动服务')
+          .width('78%')
+          .height(36)
+          .fontSize(14)
+          .backgroundColor(this.running ? '#B91C1C' : '#1D4ED8')
+          .enabled(!this.busy)
+          .onClick(() => {
+            this.toggle();
+          })
 
-      Text(this.running ? `账号 ${this.account}  密码 ${this.password}` : '启动后显示账号与密码')
-        .fontSize(14)
-        .fontColor('#FDE68A')
-        .maxLines(1)
+        Text(this.clients > 0 ? `FTP 已连接 ${this.clients}` : '手机连上面任一地址')
+          .fontSize(10)
+          .fontColor('#9CA3AF')
 
-      Button(this.running ? '停止服务' : '启动服务')
-        .width('82%')
-        .height(40)
-        .fontSize(15)
-        .backgroundColor(this.running ? '#B91C1C' : '#1D4ED8')
-        .enabled(!this.busy)
-        .onClick(() => {
-          this.toggle();
-        })
-
-      Text(this.clients > 0 ? `已连接 ${this.clients} 个客户端` : '等待手机连接')
-        .fontSize(11)
-        .fontColor('#9CA3AF')
-
-      Column({ space: 2 }) {
-        ForEach(this.logLines, (line: string) => {
-          Text(line)
-            .fontSize(9)
-            .fontColor('#6B7280')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-        }, (line: string, index: number) => `${index}-${line}`)
+        Column({ space: 1 }) {
+          ForEach(this.logLines, (line: string) => {
+            Text(line)
+              .fontSize(8)
+              .fontColor('#6B7280')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+          }, (line: string, index: number) => `${index}-${line}`)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
-      .height(46)
-      .alignItems(HorizontalAlign.Start)
+      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+      .alignItems(HorizontalAlign.Center)
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 12, right: 12, top: 10, bottom: 8 })
-    .justifyContent(FlexAlign.Center)
     .backgroundColor('#111827')
+    .scrollBar(BarState.Off)
   }
 }
