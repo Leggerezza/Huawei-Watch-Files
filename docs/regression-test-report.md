@@ -14,8 +14,10 @@ Markers: PASS / FAIL / PARTIAL / BLOCKED / NOT TESTED.
 | FTP large transfer | PASS | 8 MB up 5227 ms (1.5 MB/s), down 2168 ms (3.7 MB/s), SHA-256 equal |
 | FTP path policy change | PASS | root uploads stay at the client path, nothing filed |
 | HTTP protocol suite (22 checks) | **PASS** | 22 passed, 0 failed |
+| Stage 1 layering (hub / metadata / media) | **PASS** | metadata probe + ImageSource decode on device |
+| Browser end-to-end (real Chrome, isolated context) | **PASS** | login, list, upload, download verified against the watch |
 | Background continuous task | **FAIL** | `BusinessError 9800005 - Continuous task verification failed` |
-| Media (image/audio/video/text) | NOT TESTED | not implemented in this build |
+| Media (audio/video playback, text reader) | NOT TESTED | not implemented in this build |
 | FFmpeg probe | NOT TESTED | project not started |
 
 ## FTP suite detail
@@ -45,6 +47,34 @@ Two defects were found and fixed while getting here:
 
 1. `STOR` of a small file intermittently stored 0 bytes. Root cause: the passive data connection's `message` listener was attached in the transfer handler, so a client that wrote its payload and closed before the command was parsed lost the bytes when the socket layer closed the connection. Fix: attach a collector in the `connect` callback and drain it into the sink.
 2. The suite's control socket timeout was 8 s, shorter than an 8 MB transfer, so a slow but correct transfer looked like a dropped connection. Fixed to 120 s.
+
+## Stage 1 verification
+
+Build 486 KB, installed 22:50, `ServerHub` owning both transports.
+
+**Metadata layer on device** - after a real 320x240 JPEG was uploaded, the startup self-check logged:
+
+```
+WatchProbe: [Images] watch-test.jpg image/jpeg kind=IMAGE container=jpeg codec= play=SYSTEM size=320x240
+```
+
+That single line exercises `FsStore.readHead`, `Metadata.inspect` (extension + magic → container, kind, policy) and `MediaBackend.imageInfo` (`ImageSource` actually decoded the file and returned 320x240). `policyPlayable=SYSTEM` matches the capability report for JPEG.
+
+**Browser end-to-end** - Chrome in an isolated context (`watch-live`), phone viewport 390x844, against the watch at `http://192.168.137.95:47553/`:
+
+1. unauthenticated visit shows the access-code page (server returns 401, expected);
+2. typing the code and submitting navigates to the browser page - `9.94 GB / 13.55 GB`, six buckets plus `readme.txt`;
+3. clicking `Images` navigates with the breadcrumb and a `..` row;
+4. uploading a 300 KB `File` through the page's own `XMLHttpRequest` path reports `上传完成`, 100% progress;
+5. the server log confirms `upload /browser-upload.jpg -> /Images/browser-upload.jpg (307200 bytes)`, i.e. the HTTP filing policy applied;
+6. `fetch('/dl?...')` returns 200, `image/jpeg`, 307200 bytes, first bytes `FF D8 FF E0`, and `Content-Disposition: attachment; filename="..."; filename*=UTF-8''...`;
+7. pressing 删 raises the confirm dialog, accepting it deletes the file and lands on the "已删除" page.
+
+Three UI defects were found by the browser and fixed: the mkdir input had no `autocomplete` (Chrome accessibility issue), the per-row delete button had a ~28 px hit area (now ~34 px with an `aria-label`), and every page load produced a `favicon.ico` 404 (now `204`).
+
+Artifacts: [browser-browse.png](browser-browse.png), [browser-images.png](browser-images.png).
+
+**Regression after the refactor**: FTP 65/65 and HTTP 22/22 both re-run on this build, so the layering did not break either transport.
 
 ## HTTP suite detail
 

@@ -1,7 +1,6 @@
 import { common, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
-import { FtpServer, FtpStatus } from '../services/FtpServer';
-import { HttpServer, HttpStatus } from '../services/HttpServer';
+import { ServerHub, ServerStatus } from '../services/ServerHub';
 import { getLocalIpv4 } from '../services/NetInfo';
 
 function two(n: number): string {
@@ -22,31 +21,25 @@ struct Index {
   @State clients: number = 0;
   @State logLines: string[] = [];
 
-  private ftp: FtpServer | null = null;
-  private http: HttpServer | null = null;
+  private hub: ServerHub | null = null;
   private keepAlive: boolean = false;
 
   aboutToAppear(): void {
-    const ftp: FtpServer = new FtpServer();
-    ftp.onStatus = (st: FtpStatus) => {
-      this.running = st.running || (this.http !== null && this.http.isRunning());
-      this.ftpPort = st.port;
-      this.ftpUser = st.user;
-      this.ftpPass = st.pass;
-      this.clients = st.clients;
+    const hub: ServerHub = new ServerHub();
+    hub.onStatus = (st: ServerStatus) => {
+      this.running = st.running;
+      this.ftpPort = st.ftpPort;
+      this.ftpUser = st.ftpUser;
+      this.ftpPass = st.ftpPass;
+      this.httpPort = st.httpPort;
+      this.httpCode = st.httpCode;
+      this.clients = st.ftpClients;
+      if (st.ip.length > 0) {
+        this.ip = st.ip;
+      }
     };
-    ftp.onLog = (msg: string) => this.pushLog(msg);
-    this.ftp = ftp;
-
-    const http: HttpServer = new HttpServer();
-    http.onStatus = (st: HttpStatus) => {
-      this.httpPort = st.port;
-      this.httpCode = st.code;
-      this.running = st.running || (this.ftp !== null && this.ftp.isRunning());
-    };
-    http.onLog = (msg: string) => this.pushLog(msg);
-    this.http = http;
-
+    hub.onLog = (msg: string) => this.pushLog(msg);
+    this.hub = hub;
     getLocalIpv4().then((value: string) => {
       this.ip = value;
       // Serve as soon as the page is up: opening the app is the user intent.
@@ -55,16 +48,11 @@ struct Index {
   }
 
   aboutToDisappear(): void {
-    const ftp: FtpServer | null = this.ftp;
-    const http: HttpServer | null = this.http;
-    this.ftp = null;
-    this.http = null;
+    const hub: ServerHub | null = this.hub;
+    this.hub = null;
     this.releaseKeepAlive();
-    if (ftp !== null) {
-      ftp.stop();
-    }
-    if (http !== null) {
-      http.stop();
+    if (hub !== null) {
+      hub.stop();
     }
   }
 
@@ -99,6 +87,7 @@ struct Index {
       this.pushLog('后台保活已开启');
     } catch (e) {
       const err: Error = e as Error;
+      // Known to fail on this watch with 9800005; surfaced instead of hidden.
       this.pushLog(`保活失败: ${err.message}`);
     }
   }
@@ -116,39 +105,19 @@ struct Index {
   }
 
   private async toggle(): Promise<void> {
-    const ftp: FtpServer | null = this.ftp;
-    const http: HttpServer | null = this.http;
-    if (ftp === null || http === null || this.busy) {
+    const hub: ServerHub | null = this.hub;
+    if (hub === null || this.busy) {
       return;
     }
     this.busy = true;
     try {
       if (this.running) {
         await this.releaseKeepAlive();
-        await ftp.stop();
-        await http.stop();
-        this.running = false;
-        this.ftpPort = 0;
-        this.httpPort = 0;
+        await hub.stop();
       } else {
         const ctx: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
         this.ip = await getLocalIpv4();
-        try {
-          const st: FtpStatus = await ftp.start(ctx.filesDir, this.ip);
-          this.ftpPort = st.port;
-        } catch (e) {
-          const err: Error = e as Error;
-          this.pushLog(`FTP 启动失败: ${err.message}`);
-        }
-        try {
-          const st: HttpStatus = await http.start(ctx.filesDir, this.ip);
-          this.httpPort = st.port;
-          this.httpCode = st.code;
-        } catch (e) {
-          const err: Error = e as Error;
-          this.pushLog(`HTTP 启动失败: ${err.message}`);
-        }
-        this.running = ftp.isRunning() || http.isRunning();
+        await hub.start(ctx.filesDir, this.ip);
         await this.acquireKeepAlive();
       }
     } catch (e) {

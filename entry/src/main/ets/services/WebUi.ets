@@ -85,8 +85,7 @@ export function loginPage(error: string): string {
 <div class="card">
   <p class="muted">输入手表屏幕上显示的 HTTP 访问码。访问码每次启动都会变化。</p>
   <form method="post" action="/login">
-    <input type="password" name="code" inputmode="latin" autocomplete="off" placeholder="访问码" autofocus>
-    <div class="row" style="margin-top:10px"><button type="submit">进入</button></div>
+    <input type="password" name="code" inputmode="latin" autocomplete="off" placeholder="访问码" autofocus>    <div class="row" style="margin-top:10px"><button type="submit">进入</button></div>
   </form>
   ${err}
 </div>`;
@@ -154,7 +153,7 @@ function entryRow(e: FsEntry, dirPath: string): string {
     + `<span class="m">${meta}</span>`
     + `<form method="post" action="/delete" onsubmit="return confirm('删除 ${esc(e.name)} ?')" style="margin:0">`
     + `<input type="hidden" name="csrf" value="__CSRF__"><input type="hidden" name="p" value="${esc(full)}">`
-    + `<button class="ghost" style="padding:4px 8px;font-size:12px">删</button></form></li>`;
+    + `<button class="ghost" aria-label="删除 ${name}" style="padding:8px 10px;font-size:13px">删</button></form></li>`;
 }
 
 /** JSON for an inline <script>: escapes '<' so a file name cannot close the tag. */
@@ -193,7 +192,7 @@ export function browsePage(input: PageInput): string {
     <form method="post" action="/mkdir" class="row" style="margin:0;flex:1">
       <input type="hidden" name="csrf" value="${esc(input.csrf)}">
       <input type="hidden" name="p" value="${esc(input.path)}">
-      <input type="text" name="name" placeholder="新建文件夹" style="flex:1;min-width:120px">
+      <input type="text" name="name" placeholder="新建文件夹" autocomplete="off" style="flex:1;min-width:120px">
       <button class="ghost" type="submit">创建</button>
     </form>
   </div>

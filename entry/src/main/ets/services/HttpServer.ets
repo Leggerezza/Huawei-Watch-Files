@@ -6,6 +6,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { FsEntry, FsStore } from './FsStore';
 import { Classifier } from './Classifier';
+import { mimeOf } from './Metadata';
 import { browsePage, esc, loginPage, messagePage, PageInput, enc } from './WebUi';
 
 const CRLF: string = '\r\n';
@@ -21,36 +22,6 @@ const LOGIN_MAX_FAILS: number = 10;
 const LOGIN_COOLDOWN_MS: number = 60 * 1000;
 const PORT_MIN: number = 30000;
 const PORT_MAX: number = 60000;
-
-const MIME: Map<string, string> = new Map<string, string>();
-
-function initMime(): void {
-  const pairs: string[][] = [
-    ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['png', 'image/png'], ['gif', 'image/gif'],
-    ['webp', 'image/webp'], ['bmp', 'image/bmp'], ['svg', 'image/svg+xml'], ['heic', 'image/heic'],
-    ['mp4', 'video/mp4'], ['mov', 'video/quicktime'], ['mkv', 'video/x-matroska'], ['webm', 'video/webm'],
-    ['mp3', 'audio/mpeg'], ['flac', 'audio/flac'], ['wav', 'audio/wav'], ['m4a', 'audio/mp4'],
-    ['aac', 'audio/aac'], ['ogg', 'audio/ogg'], ['opus', 'audio/opus'], ['amr', 'audio/amr'],
-    ['txt', 'text/plain; charset=utf-8'], ['md', 'text/plain; charset=utf-8'], ['csv', 'text/csv; charset=utf-8'],
-    ['json', 'application/json'], ['html', 'text/html; charset=utf-8'], ['xml', 'application/xml'],
-    ['pdf', 'application/pdf'], ['zip', 'application/zip'], ['rar', 'application/vnd.rar'],
-    ['7z', 'application/x-7z-compressed'], ['gz', 'application/gzip'], ['apk', 'application/vnd.android.package-archive'],
-    ['hap', 'application/octet-stream']
-  ];
-  for (let i = 0; i < pairs.length; i++) {
-    MIME.set(pairs[i][0], pairs[i][1]);
-  }
-}
-
-function contentTypeFor(name: string): string {
-  const n: string = name.toLowerCase();
-  const dot: number = n.lastIndexOf('.');
-  if (dot < 0) {
-    return 'application/octet-stream';
-  }
-  const mime: string | undefined = MIME.get(n.substring(dot + 1));
-  return mime === undefined ? 'application/octet-stream' : mime;
-}
 
 export class HttpStatus {
   running: boolean = false;
@@ -545,30 +516,10 @@ export class HttpServer {
   }
 
   private uniqueReal(realPath: string): string {
-    try {
-      if (!fs.accessSync(realPath)) {
-        return realPath;
-      }
-    } catch (e) {
-      return realPath;
-    }
     const slash: number = realPath.lastIndexOf('/');
     const dir: string = realPath.substring(0, slash);
     const name: string = realPath.substring(slash + 1);
-    const dot: number = name.lastIndexOf('.');
-    const base: string = dot > 0 ? name.substring(0, dot) : name;
-    const ext: string = dot > 0 ? name.substring(dot) : '';
-    for (let i = 1; i < 500; i++) {
-      const candidate: string = `${dir}/${base} (${i})${ext}`;
-      try {
-        if (!fs.accessSync(candidate)) {
-          return candidate;
-        }
-      } catch (e) {
-        return candidate;
-      }
-    }
-    return `${dir}/${base}-${Date.now()}${ext}`;
+    return this.store.uniquePath(dir, name);
   }
 
   /** Rejects separators, control characters and dot-only names. */
@@ -637,6 +588,11 @@ export class HttpServer {
   }
 
   private routeGet(c: Conn): void {
+    if (c.path === '/favicon.ico') {
+      // Browsers ask for it unprompted; answer 204 so the console stays clean.
+      this.respond(c, 204, 'No Content', 'text/plain; charset=utf-8', '', '');
+      return;
+    }
     if (c.path === '/login') {
       this.respondHtml(c, 200, loginPage(''));
       return;
@@ -814,7 +770,7 @@ export class HttpServer {
     }
     const size: number = this.store.size(real);
     const name: string = p.substring(p.lastIndexOf('/') + 1);
-    const type: string = contentTypeFor(name);
+    const type: string = mimeOf(name);
     let start: number = 0;
     let end: number = size - 1;
     let status: number = 200;

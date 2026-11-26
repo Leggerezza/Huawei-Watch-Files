@@ -12,6 +12,8 @@ A file server that runs on the watch: FTP for clients that speak it, and a brows
 - Builds, signs and installs on the watch
 - FTP: 65 protocol checks pass on the device
 - HTTP: 22 protocol checks pass on the device
+- Stage 1 layering in place: `ServerHub` (transports), `Metadata` (type/container/codec/playability), `MediaBackend` (system `ImageSource`), one `FsStore`
+- Browser flow verified against the watch in a real Chrome instance (login, list, upload, download, delete)
 - Background execution: **not granted** by the system (`9800005`), see below
 
 ```
@@ -84,6 +86,8 @@ Two end-to-end suites, both run against the real device.
 `Test-Ftp-Suite.ps1` speaks FTP over a raw control connection and hand-built passive data channels: 65 checks covering the pre-auth gate, credential handling, traversal clamping, unicode names, SIZE/MDTM/MLSD, APPE, REST resume, directory semantics, rename, an 8 MB transfer compared by SHA-256, two concurrent clients, and the client-path policy.
 
 `Test-Http.ps1` drives the browser service with curl and a cookie jar: 22 checks covering the 401 gate, login, CSRF (a forged token must get 403), upload/download with SHA-256, Range, mkdir/rename/delete, traversal and chunked-body rejection.
+
+The web page is also exercised in a real browser (Chrome, isolated context, 390x844 viewport) against the watch: login, bucket navigation, upload through the page's own XHR path, download with `Content-Disposition`, and delete with its confirm dialog. `tools/preview-page.js` renders the same markup to `preview/index.html` so layout can be reviewed without a device.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Test-Ftp-Suite.ps1 -WatchIp <ip> -Port <ftp> -User <u> -Pass <p> -LargeMb 8

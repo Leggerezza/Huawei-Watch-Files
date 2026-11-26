@@ -7,7 +7,7 @@ State after this round. Status words are the ones the brief asked for: PASS / FA
 | Stage | Content | Status | Notes |
 | --- | --- | --- | --- |
 | 0 | audit + baseline | PASS | `audit-phase0.md`; baseline suite re-run |
-| 1 | storage / transport / media layering | PARTIAL | `FsStore` shared by both servers; no media layer yet |
+| 1 | storage / transport / media layering | PASS | `ServerHub`, `Metadata`, `MediaBackend`, `FsStore` additions; verified on device (see below) |
 | 2 | file manager UI | NOT STARTED | the browser page covers browsing from a phone, not on the watch |
 | 3 | FTP consistency + hardening | PASS | filing off for FTP, fail-closed RNG, 8-connection cap, idle sweep; suite 65/65 |
 | 4 | HTTP file service | PARTIAL | implementation complete; device login flow still failing, see regression report |
