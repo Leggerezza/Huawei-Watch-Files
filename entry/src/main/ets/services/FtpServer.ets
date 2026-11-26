@@ -4,6 +4,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import { Classifier } from './Classifier';
 import { FsEntry, FsStore } from './FsStore';
 
 const CRLF: string = '\r\n';
@@ -60,6 +61,13 @@ class FtpSession {
 export class FtpServer {
   private server: socket.TCPSocketServer | null = null;
   private store: FsStore = new FsStore('');
+  private classifier: Classifier = new Classifier('');
+  /**
+   * When true, a file uploaded straight into the FTP root is filed into a
+   * type bucket (Images/, Videos/, ...). Files uploaded to an explicit path
+   * are always left alone.
+   */
+  private classifyRootUploads: boolean = true;
   private sessions: FtpSession[] = [];
   private decoder: util.TextDecoder = util.TextDecoder.create('utf-8');
   private encoder: util.TextEncoder = new util.TextEncoder();
@@ -104,6 +112,10 @@ export class FtpServer {
     }
     this.store = new FsStore(root);
     this.store.ensureRoot();
+    this.classifier = new Classifier(this.store.root);
+    if (this.classifyRootUploads) {
+      this.classifier.ensureBuckets();
+    }
     this.localIp = localIp.length > 0 ? localIp : '127.0.0.1';
     this.probePaths();
     this.failTimes = [];
@@ -695,7 +707,9 @@ export class FtpServer {
     }
     const file: fs.File = opened;
 
-    await this.reply(s, '150 Ok to send data.');
+    // Attach the sink before answering 150: a client is free to write and
+    // close the moment it sees 150, and anything that arrives before the
+    // listener exists is lost (observed as an APPE that stored 0 bytes).
     let total: number = 0;
     let failed: boolean = false;
     data.on('message', (info: socket.SocketMessageInfo) => {
@@ -708,7 +722,7 @@ export class FtpServer {
       }
     });
 
-    await new Promise<void>((resolve: () => void) => {
+    const closed: Promise<void> = new Promise<void>((resolve: () => void) => {
       let settled: boolean = false;
       const finish: () => void = () => {
         if (!settled) {
@@ -724,6 +738,9 @@ export class FtpServer {
       }, UPLOAD_IDLE_TIMEOUT_MS);
     });
 
+    await this.reply(s, '150 Ok to send data.');
+    await closed;
+
     try {
       data.off('message');
     } catch (e) {
@@ -733,8 +750,16 @@ export class FtpServer {
     } catch (e) {
     }
     await this.endData(s, data);
+    let note: string = '';
+    if (!failed && !append && this.classifyRootUploads) {
+      const moved: string = this.classifier.fileRootUpload(real, v);
+      if (moved.length > 0) {
+        note = ` Stored as ${moved}.`;
+        this.log(`#${s.id} filed ${v} -> ${moved}`);
+      }
+    }
     this.log(`#${s.id} STOR ${v} ${total} bytes`);
-    await this.reply(s, failed ? '451 Transfer aborted, write error.' : `226 Transfer complete (${total} bytes).`);
+    await this.reply(s, failed ? '451 Transfer aborted, write error.' : `226 Transfer complete (${total} bytes).${note}`);
   }
 
   // ------------------------------------------------------- passive data path

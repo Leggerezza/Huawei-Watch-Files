@@ -67,14 +67,20 @@ Why not FTPS, HTTPS or WebDAV: [docs/protocol-assessment.md](docs/protocol-asses
 
 ## Tests
 
-`Test-Ftp-Suite.ps1` talks to the server over a raw control connection and hand-built passive data channels. 54 checks: pre-auth gate, credential handling, path-traversal clamping, unicode file names, SIZE/MDTM/MLSD, APPE, REST resume, directory semantics, rename, an 8 MB transfer compared by SHA-256, two concurrent clients, cleanup.
+`Test-Ftp-Suite.ps1` talks to the server over a raw control connection and hand-built passive data channels. 72 checks: pre-auth gate, credential handling, path-traversal clamping, unicode file names, SIZE/MDTM/MLSD, APPE, REST resume, directory semantics, rename, an 8 MB transfer compared by SHA-256, two concurrent clients, automatic filing of root uploads, and the login cooldown.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Test-Ftp-Suite.ps1 -WatchIp 192.168.137.223 -Port 46587 -User uwng -Pass ufesh2 -LargeMb 8
+powershell -ExecutionPolicy Bypass -File .\Test-Ftp-Suite.ps1 -WatchIp 192.168.137.223 -Port 54920 -User mqpq -Pass d9eh8h -LargeMb 8
 # add -TestLockout to also drive the 30 s cooldown (takes ~35 s longer)
 ```
 
-Last run with the screen off: 8 MB up at 2.0 MB/s, down at 3.0 MB/s, SHA-256 equal.
+Last run: 72/72, 8 MB up at 2.0 MB/s and down at 2.2 MB/s, SHA-256 equal.
+
+## Storage layout
+
+Six buckets live at the FTP root: `Images`, `Videos`, `Audio`, `Documents`, `Archives`, `Others`. A file uploaded **straight into the root** is filed into its bucket when the transfer completes, and the `226` reply names the final path. A file uploaded to an explicit path is left alone. Type comes from the extension, falling back to magic bytes when the name says nothing. Name collisions become `name (1).ext`.
+
+This trades path fidelity for a browsable tree: `STOR photo.jpg` ends up at `/Images/photo.jpg`, so a client that asks for `/photo.jpg` afterwards gets `550`. That is why it only applies to root uploads. Details and the alternatives that were rejected: [docs/storage-layout.md](docs/storage-layout.md).
 
 ## Background execution
 
@@ -99,12 +105,13 @@ Signing uses DevEco automatic signing. `build-profile.json5` holds the resulting
 ## Layout
 
 ```
-entry/src/main/ets/services/FtpServer.ets   protocol, sockets, passive data channel
-entry/src/main/ets/services/FsStore.ets     sandbox file access, path clamping
-entry/src/main/ets/services/NetInfo.ets     picks the Wi-Fi IPv4 for display
-entry/src/main/ets/pages/Index.ets          466x466 UI
-Build-Hap.ps1 Deploy-Hap.ps1 Test-Ftp.ps1
-tools/Start-Hotspot.ps1                     revives the Windows mobile hotspot
+entry/src/main/ets/services/FtpServer.ets     protocol, sockets, passive data channel
+entry/src/main/ets/services/FsStore.ets       sandbox file access, path clamping
+entry/src/main/ets/services/Classifier.ets    type buckets, extension + magic sniffing
+entry/src/main/ets/services/NetInfo.ets       picks the Wi-Fi IPv4 for display
+entry/src/main/ets/pages/Index.ets            466x466 UI
+Build-Hap.ps1 Deploy-Hap.ps1 Test-Ftp.ps1 Test-Ftp-Suite.ps1
+tools/Start-Hotspot.ps1                       revives the Windows mobile hotspot
 ```
 
 ## Not done

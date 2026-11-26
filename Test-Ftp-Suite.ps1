@@ -113,7 +113,8 @@ function Read-AllBytes {
         if ($n -le 0) { break }
         $ms.Write($buf, 0, $n)
     }
-    return $ms.ToArray()
+    # The comma keeps PowerShell from unrolling an empty array into $null.
+    return ,$ms.ToArray()
 }
 
 function Invoke-Download {
@@ -217,6 +218,18 @@ Check 'RETR ../../../etc/passwd is 550' ($r[-1] -like '550*') $r[-1]
 $r = @(Send-Cmd $c 'SIZE ../../etc/hosts')
 Check 'SIZE ../../etc/hosts is 550' ($r[-1] -like '550*') $r[-1]
 
+Write-Host "`n=== 4b. scratch workspace ===" -ForegroundColor Cyan
+$r = @(Send-Cmd $c 'MKD /scratch')
+Check 'MKD /scratch (or it already exists)' (($r[-1] -like '257*') -or ($r[-1] -like '550*')) $r[-1]
+$r = @(Send-Cmd $c 'CWD /scratch')
+Check 'CWD /scratch' ($r[-1] -like '250*') $r[-1]
+# Clear anything a previous run left behind so later checks start from zero.
+$pre = Invoke-Listing $c 'NLST'
+foreach ($line in ([Text.Encoding]::UTF8.GetString($pre.Bytes) -split "`r`n")) {
+    $n = $line.Trim()
+    if ($n.Length -gt 0) { $null = Send-Cmd $c "DELE $n" }
+}
+
 Write-Host "`n=== 5. unicode name round trip ===" -ForegroundColor Cyan
 # Built from code points so the test stays correct whatever encoding this
 # .ps1 is read with (Windows PowerShell 5.1 assumes ANSI without a BOM).
@@ -268,6 +281,7 @@ Check 'RETR after REST 4 returns the tail' ([Text.Encoding]::ASCII.GetString($ta
 $null = Send-Cmd $c 'DELE rest.txt'
 
 Write-Host "`n=== 9. directory semantics ===" -ForegroundColor Cyan
+$null = Send-Cmd $c 'CWD /'
 $r = @(Send-Cmd $c 'MKD deep/nested/dir')
 Check 'MKD creates nested path' ($r[-1] -like '257*') $r[-1]
 $r = @(Send-Cmd $c 'CWD deep/nested/dir')
@@ -286,6 +300,7 @@ $null = Send-Cmd $c 'RMD deep/nested/dir'
 $null = Send-Cmd $c 'RMD deep/nested'
 $r = @(Send-Cmd $c 'RMD deep')
 Check 'RMD removes the empty tree bottom-up' ($r[-1] -like '250*') $r[-1]
+$null = Send-Cmd $c 'CWD /scratch'
 
 Write-Host "`n=== 10. rename ===" -ForegroundColor Cyan
 $null = Invoke-Upload $c 'r1.txt' ([Text.Encoding]::ASCII.GetBytes('x'))
@@ -342,15 +357,79 @@ $r2 = @(Send-Cmd $c2 'PWD')
 Check 'two control connections are served at once' (($r1[-1] -like '257*') -and ($r2[-1] -like '257*'))
 $l1 = Invoke-Listing $c 'LIST'
 $l2 = Invoke-Listing $c2 'LIST'
-Check 'both clients can open a data channel' (($l1.Bytes.Length -gt 0) -and ($l2.Bytes.Length -gt 0))
+Check 'both clients can open a data channel' (($l1.End -like '226*') -and ($l2.End -like '226*')) "$($l1.End) / $($l2.End)"
 $r = @(Send-Cmd $c2 'QUIT')
 Check 'QUIT gets 221' ($r[-1] -like '221*') $r[-1]
 Close-Control $c2
 
 Write-Host "`n=== 14. cleanup and final listing ===" -ForegroundColor Cyan
+$scratch = Invoke-Listing $c 'LIST'
+$scratchText = [Text.Encoding]::UTF8.GetString($scratch.Bytes)
+Check 'scratch workspace is empty again' (($scratchText -split "`r`n" | Where-Object { $_.Trim() -ne '' }).Count -eq 0) $scratchText
+$null = Send-Cmd $c 'CWD /'
+$r = @(Send-Cmd $c 'RMD /scratch')
+Check 'RMD /scratch' ($r[-1] -like '250*') $r[-1]
 $final = Invoke-Listing $c 'LIST'
 $finalText = [Text.Encoding]::UTF8.GetString($final.Bytes)
-Check 'only readme.txt is left' (($finalText -split "`r`n" | Where-Object { $_.Trim() -ne '' }).Count -eq 1) $finalText
+$names = @($finalText -split "`r`n" | Where-Object { $_.Trim() -ne '' })
+Check 'root holds the six buckets and readme.txt' ($names.Count -eq 7) ($names -join ' | ')
+$bucketsOk = $true
+foreach ($b in @('Images', 'Videos', 'Audio', 'Documents', 'Archives', 'Others')) {
+    if ($finalText -notmatch "(?m)^d.*\s$b\s*$") { $bucketsOk = $false }
+}
+Check 'all six buckets are present' $bucketsOk
+
+Write-Host "`n=== 15. automatic filing of root uploads ===" -ForegroundColor Cyan
+# PNG bytes under a name with no extension: only magic can classify this.
+$png = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0)
+$up = Invoke-Upload $c 'noext' $png
+Check 'root upload reports its filed path' ($up.End -like '*Stored as /Images/noext*') $up.End
+$r = @(Send-Cmd $c 'SIZE /Images/noext')
+Check 'SIZE finds it under /Images' ($r[-1] -eq ("213 " + $png.Length)) $r[-1]
+$r = @(Send-Cmd $c 'SIZE /noext')
+Check 'the original root path no longer exists' ($r[-1] -like '550*') $r[-1]
+
+$up = Invoke-Upload $c 'noext' $png
+Check 'a second upload gets a collision-safe name' ($up.End -like '*Stored as /Images/noext (1)*') $up.End
+$r = @(Send-Cmd $c 'SIZE /Images/noext (1)')
+Check 'the renamed copy is readable' ($r[-1] -eq ("213 " + $png.Length)) $r[-1]
+
+$pdf = [byte[]](0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34)
+$null = Invoke-Upload $c 'report.pdf' $pdf
+$r = @(Send-Cmd $c 'SIZE /Documents/report.pdf')
+Check 'a .pdf lands in /Documents' ($r[-1] -eq ("213 " + $pdf.Length)) $r[-1]
+
+$zip = [byte[]](0x50, 0x4B, 0x03, 0x04, 0x14, 0x00)
+$null = Invoke-Upload $c 'bundle.zip' $zip
+$r = @(Send-Cmd $c 'SIZE /Archives/bundle.zip')
+Check 'a .zip lands in /Archives' ($r[-1] -eq ("213 " + $zip.Length)) $r[-1]
+
+$mp4 = [byte[]](0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32)
+$null = Invoke-Upload $c 'clip.mp4' $mp4
+$r = @(Send-Cmd $c 'SIZE /Videos/clip.mp4')
+Check 'an .mp4 lands in /Videos' ($r[-1] -eq ("213 " + $mp4.Length)) $r[-1]
+
+$mp3 = [byte[]](0x49, 0x44, 0x33, 0x03, 0x00)
+$null = Invoke-Upload $c 'song.mp3' $mp3
+$r = @(Send-Cmd $c 'SIZE /Audio/song.mp3')
+Check 'an .mp3 lands in /Audio' ($r[-1] -eq ("213 " + $mp3.Length)) $r[-1]
+
+$blob = [byte[]](0x01, 0x02, 0x03, 0x04, 0x05, 0x06)
+$null = Invoke-Upload $c 'blob.bin' $blob
+$r = @(Send-Cmd $c 'SIZE /Others/blob.bin')
+Check 'an unknown file lands in /Others' ($r[-1] -eq ("213 " + $blob.Length)) $r[-1]
+
+$null = Send-Cmd $c 'CWD /Documents'
+$null = Invoke-Upload $c 'keep.txt' ([Text.Encoding]::ASCII.GetBytes('keep'))
+$r = @(Send-Cmd $c 'SIZE keep.txt')
+Check 'an explicit subdirectory upload is not moved' ($r[-1] -eq '213 4') $r[-1]
+$null = Send-Cmd $c 'CWD /'
+
+foreach ($p in @('/Images/noext', '/Images/noext (1)', '/Documents/report.pdf', '/Archives/bundle.zip',
+        '/Videos/clip.mp4', '/Audio/song.mp3', '/Others/blob.bin', '/Documents/keep.txt')) {
+    $null = Send-Cmd $c "DELE $p"
+}
+
 $r = @(Send-Cmd $c 'QUIT')
 Check 'control connection closes cleanly' ($r[-1] -like '221*') $r[-1]
 Close-Control $c
