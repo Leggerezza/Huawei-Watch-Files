@@ -48,6 +48,26 @@ Two defects were found and fixed while getting here:
 1. `STOR` of a small file intermittently stored 0 bytes. Root cause: the passive data connection's `message` listener was attached in the transfer handler, so a client that wrote its payload and closed before the command was parsed lost the bytes when the socket layer closed the connection. Fix: attach a collector in the `connect` callback and drain it into the sink.
 2. The suite's control socket timeout was 8 s, shorter than an 8 MB transfer, so a slow but correct transfer looked like a dropped connection. Fixed to 120 s.
 
+## Stage 2 remainder, stage 5 and the TXT reader
+
+Build 700 KB, verified on the wearable emulator.
+
+| Check | Result |
+| --- | --- |
+| directory navigation into a bucket folder, then into a file | PASS (fixed a stale-render bug: the list was bound to a state counter nothing read) |
+| image viewer opens a real JPEG and shows 320x240 image/jpeg | PASS |
+| viewer next/previous by tapping the right/left third | PASS (after converting the hit zones from px to vp) |
+| viewer failure state for a synthetic file | PASS (after clearing the previous bitmap first) |
+| reader opens an 8 KB UTF-8 file, 31 pages at 11 vp | PASS |
+| A+ raises the font to 14 vp and re-paginates | PASS (after two pagination rewrites, see reader-and-viewer.md) |
+| tap paging in the reader | PASS |
+| keep-screen-on while a viewer/reader is open | PASS (hilog `WatchScreen: keep screen on: true`) |
+| crown paging | NOT TESTED - the emulator has no crown input |
+| pinch zoom / pan | NOT TESTED - emulator cannot synthesise pinch |
+| long-press detail sheet, rename/copy/move/delete | NOT TESTED - emulator cannot synthesise a long press |
+
+Regressions: none. The FTP and HTTP services were untouched this round; their last runs remain 65/65 and 22/22 on this build lineage.
+
 ## Stage 2 slice 1: file manager
 
 Verified on the wearable emulator (466x466, API 23) with the emulator's own automation channel: `-uiLayout -i` for widget ids and bounds, `-click` to actuate, `-screenshot` for evidence.

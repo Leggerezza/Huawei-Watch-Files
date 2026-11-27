@@ -3,17 +3,18 @@ import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { promptAction } from '@kit.ArkUI';
 import { ServerHub, ServerStatus } from '../services/ServerHub';
 import { FsStore } from '../services/FsStore';
-import { FileItem, FileListView, FileViewKind, BucketStat } from '../services/FileListView';
-import { MediaKind, Playability } from '../services/Metadata';
+import { FileItem, FileListView, FileViewKind, BucketStat, bucketOf } from '../services/FileListView';
+import { MediaKind, Playability, extensionOf } from '../services/Metadata';
 import { getLocalIpv4 } from '../services/NetInfo';
 import { probeBackgroundModes } from '../services/BackgroundProbe';
+import { ImageViewer } from '../components/ImageViewer';
+import { TextReader } from '../components/TextReader';
 
-// The watch reports 466x466 px at density 2, so the usable layout is ~233 vp
-// square. Every size below is in vp: a 28 vp row is ~56 px, six buckets plus
-// header and tabs fit without scrolling.
+// 466x466 px at density 2 => 233x233 vp of layout space.
 const ROW_VP: number = 28;
 const TAB_VP: number = 30;
 const HEADER_VP: number = 26;
+const BUCKETS: string[] = ['Images', 'Videos', 'Audio', 'Documents', 'Archives', 'Others'];
 
 function two(n: number): string {
   return `${n}`.padStart(2, '0');
@@ -77,17 +78,45 @@ function shortName(name: string, max: number): string {
   return name.length <= max ? name : `${name.substring(0, max - 2)}…`;
 }
 
+function playLabel(p: Playability): string {
+  if (p === Playability.SYSTEM) {
+    return '可播放';
+  }
+  if (p === Playability.UNSUPPORTED) {
+    return '仅存储';
+  }
+  if (p === Playability.MAYBE) {
+    return '待验证';
+  }
+  return '';
+}
+
 @Entry
 @Component
 struct Index {
   @State tab: number = 0;
   @State tick: number = 0;
   @State buckets: BucketStat[] = [];
+  @State items: FileItem[] = [];
   @State filter: string = '';
   @State title: string = '分类';
   @State loading: boolean = false;
   @State note: string = '';
-  // transport state
+  // navigation
+  @State screen: string = 'browse';
+  @State imageList: FileItem[] = [];
+  @State imageIndex: number = 0;
+  @State openName: string = '';
+  @State openReal: string = '';
+  @State openSize: number = 0;
+  // overlays
+  @State detailPath: string = '';
+  @State detailIndex: number = -1;
+  @State inputMode: string = '';
+  @State inputValue: string = '';
+  @State inputTarget: string = '';
+  @State moveMode: string = '';
+  // transport
   @State running: boolean = false;
   @State busy: boolean = false;
   @State ip: string = '0.0.0.0';
@@ -114,6 +143,7 @@ struct Index {
     vm.onChange = () => {
       this.tick = this.tick + 1;
       this.buckets = vm.buckets;
+      this.items = vm.data.snapshot();
       this.loading = vm.loading;
       this.note = vm.note;
       this.filter = vm.filter;
@@ -209,6 +239,7 @@ struct Index {
 
   private async switchTab(index: number): Promise<void> {
     this.tab = index;
+    this.detailPath = '';
     const vm: FileListView | null = this.vm;
     if (vm === null) {
       return;
@@ -225,6 +256,14 @@ struct Index {
     }
   }
 
+  private itemAt(index: number): FileItem | null {
+    const vm: FileListView | null = this.vm;
+    if (vm === null) {
+      return null;
+    }
+    return index >= 0 && index < this.items.length ? this.items[index] : null;
+  }
+
   private async onRowTap(item: FileItem): Promise<void> {
     const vm: FileListView | null = this.vm;
     if (vm === null) {
@@ -235,15 +274,132 @@ struct Index {
       await vm.enter(item);
       return;
     }
-    const kind: string = item.kind === MediaKind.IMAGE ? '图片' :
-      (item.kind === MediaKind.VIDEO ? '视频' : (item.kind === MediaKind.AUDIO ? '音频' : '文件'));
-    const play: string = item.playable === Playability.SYSTEM ? '可播放' :
-      (item.playable === Playability.UNSUPPORTED ? '仅存储' : '未验证');
-    promptAction.showToast({
-      message: `${item.name}  ${kind} · ${fmtSize(item.size)} · ${play}`,
-      duration: 2000
-    });
+    if (item.kind === MediaKind.IMAGE) {
+      const items: FileItem[] = vm.data.snapshot();
+      const images: FileItem[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (!items[i].isDir && items[i].kind === MediaKind.IMAGE) {
+          images.push(items[i]);
+        }
+      }
+      this.imageList = images;
+      let at: number = 0;
+      for (let i = 0; i < images.length; i++) {
+        if (images[i].path === item.path) {
+          at = i;
+        }
+      }
+      this.imageIndex = at;
+      this.openCurrentImage();
+      return;
+    }
+    const ext: string = extensionOf(item.name);
+    if (ext === 'txt' || ext === 'md' || ext === 'log') {
+      this.openName = item.name;
+      this.openReal = this.store === null ? '' : this.store.real(item.path);
+      this.openSize = item.size;
+      this.screen = 'text';
+      return;
+    }
+    promptAction.showToast({ message: `${item.name}  ${playLabel(item.playable)}`, duration: 1500 });
   }
+
+  private openCurrentImage(): void {
+    if (this.imageList.length === 0 || this.store === null) {
+      return;
+    }
+    const item: FileItem = this.imageList[this.imageIndex];
+    this.openName = item.name;
+    this.openReal = this.store.real(item.path);
+    this.openSize = item.size;
+    this.screen = 'image';
+  }
+
+  private stepImage(delta: number): void {
+    if (this.imageList.length === 0) {
+      return;
+    }
+    const next: number = (this.imageIndex + delta + this.imageList.length) % this.imageList.length;
+    this.imageIndex = next;
+    this.openCurrentImage();
+  }
+
+  private showDetail(index: number): void {
+    const item: FileItem | null = this.itemAt(index);
+    if (item === null) {
+      return;
+    }
+    this.detailIndex = index;
+    this.detailPath = item.path;
+  }
+
+  private currentDetail(): FileItem | null {
+    return this.itemAt(this.detailIndex);
+  }
+
+  private refreshList(): void {
+    const vm: FileListView | null = this.vm;
+    if (vm === null) {
+      return;
+    }
+    vm.invalidate();
+    vm.refresh();
+  }
+
+  private async doDelete(item: FileItem): Promise<void> {
+    const store: FsStore | null = this.store;
+    if (store === null) {
+      return;
+    }
+    const ok: boolean = store.removeTree(store.real(item.path));
+    this.detailPath = '';
+    this.refreshList();
+    promptAction.showToast({ message: ok ? '已删除' : '删除失败', duration: 1500 });
+  }
+
+  private async doRename(item: FileItem, newName: string): Promise<void> {
+    const store: FsStore | null = this.store;
+    if (store === null || newName.length === 0) {
+      return;
+    }
+    const idx: number = item.path.lastIndexOf('/');
+    const dir: string = idx <= 0 ? '/' : item.path.substring(0, idx);
+    const dst: string = dir === '/' ? `/${newName}` : `${dir}/${newName}`;
+    const ok: boolean = store.rename(store.real(item.path), store.real(dst));
+    this.detailPath = '';
+    this.refreshList();
+    promptAction.showToast({ message: ok ? '已重命名' : '重命名失败', duration: 1500 });
+  }
+
+  private async doCopyMove(item: FileItem, bucket: string, copy: boolean): Promise<void> {
+    const store: FsStore | null = this.store;
+    if (store === null) {
+      return;
+    }
+    const dirReal: string = store.real(`/${bucket}`);
+    if (!store.exists(dirReal)) {
+      store.mkdir(dirReal);
+    }
+    const target: string = store.uniquePath(dirReal, item.name);
+    const ok: boolean = copy ? store.copy(store.real(item.path), target) : store.move(store.real(item.path), target);
+    this.detailPath = '';
+    this.refreshList();
+    promptAction.showToast({ message: ok ? (copy ? '已复制' : '已移动') : '操作失败', duration: 1500 });
+  }
+
+  private async doMkdir(name: string): Promise<void> {
+    const store: FsStore | null = this.store;
+    const vm: FileListView | null = this.vm;
+    if (store === null || vm === null || name.length === 0) {
+      return;
+    }
+    const base: string = vm.path === '/' ? '' : vm.path;
+    const ok: boolean = store.mkdir(store.real(`${base}/${name}`));
+    this.refreshList();
+    promptAction.showToast({ message: ok ? '已创建' : '创建失败', duration: 1500 });
+  }
+
+  // ------------------------------------------------------------------ builders
 
   @Builder
   tabItem(index: number, label: string) {
@@ -268,7 +424,7 @@ struct Index {
         Text('‹')
           .fontSize(13)
           .fontColor('#93C5FD')
-          .width(20)
+          .width(18)
           .onClick(async () => {
             const vm: FileListView | null = this.vm;
             if (vm !== null) {
@@ -280,7 +436,7 @@ struct Index {
         Text('‹')
           .fontSize(13)
           .fontColor('#93C5FD')
-          .width(20)
+          .width(18)
           .onClick(async () => {
             const vm: FileListView | null = this.vm;
             if (vm !== null) {
@@ -291,26 +447,39 @@ struct Index {
       } else {
         Text('')
           .fontSize(10)
-          .width(20)
+          .width(18)
       }
-      Text(shortName(this.title, 14))
+      Text(shortName(this.title, 12))
         .fontSize(11)
         .fontWeight(FontWeight.Medium)
         .fontColor('#E5E7EB')
         .layoutWeight(1)
         .textAlign(TextAlign.Center)
         .maxLines(1)
-      Text(this.tab === 3 ? '' : (this.vm === null ? '' : this.vm.sortLabel()))
-        .fontSize(9)
-        .fontColor('#93C5FD')
-        .width(30)
-        .textAlign(TextAlign.End)
-        .onClick(() => {
-          const vm: FileListView | null = this.vm;
-          if (vm !== null) {
-            vm.cycleSort();
-          }
-        })
+      if (this.tab === 1) {
+        Text('+')
+          .fontSize(13)
+          .fontColor('#93C5FD')
+          .width(22)
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.inputMode = 'mkdir';
+            this.inputValue = '';
+            this.inputTarget = '';
+          })
+      } else {
+        Text(this.vm === null ? '' : this.vm.sortLabel())
+          .fontSize(9)
+          .fontColor('#93C5FD')
+          .width(30)
+          .textAlign(TextAlign.End)
+          .onClick(() => {
+            const vm: FileListView | null = this.vm;
+            if (vm !== null) {
+              vm.cycleSort();
+            }
+          })
+      }
     }
     .width('100%')
     .height(HEADER_VP)
@@ -318,7 +487,7 @@ struct Index {
   }
 
   @Builder
-  fileRow(item: FileItem) {
+  fileRow(item: FileItem, index: number) {
     Row({ space: 4 }) {
       Text(iconOf(item))
         .fontSize(11)
@@ -345,6 +514,12 @@ struct Index {
     .onClick(() => {
       this.onRowTap(item);
     })
+    .gesture(
+      LongPressGesture({ repeat: false })
+        .onAction(() => {
+          this.showDetail(index);
+        })
+    )
   }
 
   @Builder
@@ -394,12 +569,12 @@ struct Index {
         .padding({ top: 4, bottom: 4 })
       } else {
         List() {
-          LazyForEach(this.vm === null ? this.placeholder : this.vm.data, (item: FileItem) => {
+          ForEach(this.items, (item: FileItem, index: number) => {
             ListItem() {
-              this.fileRow(item)
+              this.fileRow(item, index)
             }
             .height(ROW_VP)
-          }, (item: FileItem) => item.path)
+          }, (item: FileItem) => `${item.path}`)
         }
         .width('100%')
         .layoutWeight(1)
@@ -464,23 +639,291 @@ struct Index {
     .padding({ left: 6, right: 6 })
   }
 
-  build() {
-    Column() {
-      if (this.tab === 3) {
-        this.transportPane()
-      } else {
-        this.filesPane()
+  @Builder
+  detailOverlay() {
+    Column({ space: 5 }) {
+      Text('文件操作')
+        .fontSize(10)
+        .fontColor('#9CA3AF')
+      Text(shortName(this.detailPath.substring(this.detailPath.lastIndexOf('/') + 1), 16))
+        .fontSize(11)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#FFFFFF')
+      Text(this.detailInfo())
+        .fontSize(7)
+        .fontColor('#93C5FD')
+        .textAlign(TextAlign.Center)
+      Row({ space: 6 }) {
+        Text('重命名')
+          .fontSize(9)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#1D4ED8')
+          .borderRadius(6)
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .onClick(() => {
+            const item: FileItem | null = this.currentDetail();
+            if (item !== null) {
+              this.inputMode = 'rename';
+              this.inputValue = item.name;
+              this.inputTarget = item.path;
+            }
+          })
+        Text('复制')
+          .fontSize(9)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#1F2937')
+          .borderRadius(6)
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .onClick(() => {
+            this.moveMode = 'copy';
+          })
+        Text('移动')
+          .fontSize(9)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#1F2937')
+          .borderRadius(6)
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .onClick(() => {
+            this.moveMode = 'move';
+          })
       }
-      Row() {
-        this.tabItem(0, '分类')
-        this.tabItem(1, '目录')
-        this.tabItem(2, '最近')
-        this.tabItem(3, '服务')
+      Row({ space: 6 }) {
+        Text('删除')
+          .fontSize(9)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#B91C1C')
+          .borderRadius(6)
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .onClick(() => {
+            const item: FileItem | null = this.currentDetail();
+            if (item !== null) {
+              this.confirmDelete(item);
+            }
+          })
+        Text('关闭')
+          .fontSize(9)
+          .fontColor('#CBD5E1')
+          .backgroundColor('#1F2937')
+          .borderRadius(6)
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .onClick(() => {
+            this.detailPath = '';
+          })
+      }
+    }
+    .width(200)
+    .padding(10)
+    .backgroundColor('#151922')
+    .borderRadius(12)
+    .border({ width: 1, color: '#2B3444' })
+  }
+
+  private detailInfo(): string {
+    const item: FileItem | null = this.currentDetail();
+    if (item === null) {
+      return '';
+    }
+    const kind: string = item.isDir ? '目录' : (item.kind === MediaKind.IMAGE ? '图片' :
+      (item.kind === MediaKind.VIDEO ? '视频' : (item.kind === MediaKind.AUDIO ? '音频' :
+        (item.kind === MediaKind.TEXT ? '文本' : '文件'))));
+    return `${kind} · ${fmtSize(item.size)}${item.isDir ? '' : ' · ' + playLabel(item.playable)}`;
+  }
+
+  private confirmDelete(item: FileItem): void {
+    AlertDialog.show({
+      title: '删除',
+      message: `${item.name}\n${fmtSize(item.size)}，此操作不可撤销`,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: '#FCA5A5',
+        action: () => {
+          this.doDelete(item);
+        }
+      }
+    });
+  }
+
+  @Builder
+  inputOverlay() {
+    Column({ space: 6 }) {
+      Text(this.inputMode === 'mkdir' ? '新建文件夹' : '重命名')
+        .fontSize(10)
+        .fontColor('#9CA3AF')
+      TextInput({ text: this.inputValue, placeholder: '名称' })
+        .width('100%')
+        .height(28)
+        .fontSize(10)
+        .backgroundColor('#0B0E14')
+        .onChange((value: string) => {
+          this.inputValue = value;
+        })
+      Row({ space: 8 }) {
+        Text('取消')
+          .fontSize(9)
+          .fontColor('#CBD5E1')
+          .backgroundColor('#1F2937')
+          .borderRadius(6)
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .onClick(() => {
+            this.inputMode = '';
+          })
+        Text('确定')
+          .fontSize(9)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#1D4ED8')
+          .borderRadius(6)
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .onClick(async () => {
+            const name: string = this.inputValue.trim();
+            const mode: string = this.inputMode;
+            const target: string = this.inputTarget;
+            this.inputMode = '';
+            if (name.length === 0) {
+              return;
+            }
+            if (mode === 'mkdir') {
+              await this.doMkdir(name);
+            } else {
+              const item: FileItem | null = this.currentDetail();
+              if (item !== null && item.path === target) {
+                await this.doRename(item, name);
+              }
+            }
+          })
+      }
+    }
+    .width(200)
+    .padding(10)
+    .backgroundColor('#151922')
+    .borderRadius(12)
+    .border({ width: 1, color: '#2B3444' })
+  }
+
+  @Builder
+  moveOverlay() {
+    Column({ space: 4 }) {
+      Text(this.moveMode === 'copy' ? '复制到分类' : '移动到分类')
+        .fontSize(10)
+        .fontColor('#9CA3AF')
+      ForEach(BUCKETS, (name: string) => {
+        Row() {
+          Text(bucketIcon(name))
+            .fontSize(10)
+            .width(18)
+          Text(name)
+            .fontSize(9)
+            .fontColor('#E5E7EB')
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .height(22)
+        .padding({ left: 6, right: 6 })
+        .onClick(async () => {
+          const item: FileItem | null = this.currentDetail();
+          const mode: string = this.moveMode;
+          this.moveMode = '';
+          if (item !== null) {
+            await this.doCopyMove(item, name, mode === 'copy');
+          }
+        })
+      }, (name: string) => name)
+      Text('取消')
+        .fontSize(9)
+        .fontColor('#CBD5E1')
+        .onClick(() => {
+          this.moveMode = '';
+        })
+    }
+    .width(190)
+    .padding(8)
+    .backgroundColor('#151922')
+    .borderRadius(12)
+    .border({ width: 1, color: '#2B3444' })
+  }
+
+  build() {
+    Stack() {
+      Column() {
+        if (this.tab === 3) {
+          this.transportPane()
+        } else {
+          this.filesPane()
+        }
+        Row() {
+          this.tabItem(0, '分类')
+          this.tabItem(1, '目录')
+          this.tabItem(2, '最近')
+          this.tabItem(3, '服务')
+        }
+        .width('100%')
+        .height(TAB_VP)
+        .backgroundColor('#151922')
+        .border({ width: { top: 1 }, color: '#232A36' })
       }
       .width('100%')
-      .height(TAB_VP)
-      .backgroundColor('#151922')
-      .border({ width: { top: 1 }, color: '#232A36' })
+      .height('100%')
+
+      if (this.screen === 'image') {
+        ImageViewer({
+          realPath: this.openReal,
+          name: this.openName,
+          fileSize: this.openSize,
+          ordinal: this.imageIndex + 1,
+          total: this.imageList.length,
+          onClose: () => {
+            this.screen = 'browse';
+          },
+          onPrev: () => {
+            this.stepImage(-1);
+          },
+          onNext: () => {
+            this.stepImage(1);
+          }
+        })
+      }
+
+      if (this.screen === 'text') {
+        TextReader({
+          realPath: this.openReal,
+          name: this.openName,
+          fileSize: this.openSize,
+          onClose: () => {
+            this.screen = 'browse';
+          }
+        })
+      }
+
+      if (this.detailPath.length > 0) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#00000080')
+          .onClick(() => {
+            this.detailPath = '';
+          })
+        this.detailOverlay()
+      }
+
+      if (this.inputMode.length > 0) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#00000080')
+        this.inputOverlay()
+      }
+
+      if (this.moveMode.length > 0) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#00000080')
+        this.moveOverlay()
+      }
     }
     .width('100%')
     .height('100%')
@@ -504,3 +947,5 @@ class FileDataPlaceholder implements IDataSource {
   unregisterDataChangeListener(listener: DataChangeListener): void {
   }
 }
+
+

@@ -8,14 +8,14 @@ State after this round. Status words are the ones the brief asked for: PASS / FA
 | --- | --- | --- | --- |
 | 0 | audit + baseline | PASS | `audit-phase0.md`; baseline suite re-run |
 | 1 | storage / transport / media layering | PASS | `ServerHub`, `Metadata`, `MediaBackend`, `FsStore` additions; verified on device (see below) |
-| 2 | file manager UI | PARTIAL | slice 1 shipped and verified on the emulator: four tabs, bucket overview, filtered bucket list, directory browse, recent list, service pane. Detail sheet, mutations and pull-to-refresh still pending |
-| 3 | FTP consistency + hardening | PASS | filing off for FTP, fail-closed RNG, 8-connection cap, idle sweep; suite 65/65 |
+| 2 | file manager UI | PARTIAL | list/navigation verified; detail sheet with rename/copy/move/delete implemented, entry is long-press which the emulator cannot synthesise |
+| 3 | FTP consistency + hardening | PASS | `stage3-ftp-review.md` maps every requirement to code and a test; suite 65/65. Timeouts are implemented but not yet asserted by a test |
 | 4 | HTTP file service | PARTIAL | implementation complete; device login flow still failing, see regression report |
-| 5 | image viewer + thumbnails | NOT STARTED | `ImageSource` + `desiredSize` plan in the decode report |
+| 5 | image viewer | PARTIAL | full-screen viewer with desiredSize decode, tap/crown paging, zoom+pan, error state, keep-screen-on; no thumbnails or grid yet |
 | 6 | audio player | NOT STARTED | `AVPlayer` + `fdSrc`; nine formats verified by the earlier probe |
 | 7 | H.264 video player | NOT STARTED | XComponent surface, `surfaceId` only after `initialized` |
 | 8 | media metadata + playability | NOT STARTED | `AVMetadataExtractor`; capability cache keyed by path+size+mtime |
-| 9 | TXT reader | NOT STARTED | chunked read, encoding detection, progress persistence |
+| 9 | TXT reader | PARTIAL | chunked read, BOM/GBK detection, unit-based pagination, font size 9-20 vp, crown + tap paging, keep-screen-on; no progress persistence, no EPUB/PDF |
 | 10 | regression + performance pass | NOT STARTED | - |
 
 ## FFmpeg probe
@@ -60,3 +60,5 @@ What the emulator cannot answer: real performance, real power/thermal behaviour,
 - Temp upload files are not swept at startup.
 - The FTP suite and HTTP suite are PowerShell scripts; a single runner that also captures device logs would make regressions one command.
 - No unit tests: the only tests are end-to-end against hardware, which is why every regression needs the watch awake.
+
+
