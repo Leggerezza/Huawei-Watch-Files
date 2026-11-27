@@ -54,8 +54,12 @@ The paginator still cuts mid-word at a page boundary rather than backing up to t
 | reader tap paging | PASS | page advanced on a bottom tap |
 | keep screen on | PASS | hilog `WatchScreen: keep screen on: true` |
 | crown paging (reader and viewer) | NOT TESTED | the emulator has no crown input; needs the watch |
-| pinch zoom / pan | NOT TESTED | emulator cannot synthesise multi-touch pinch |
+| pinch zoom / pan | NOT TESTED | emulator cannot synthesise multi-touch pinch; button zoom replaced it |
 | long-press detail sheet + rename/copy/move/delete | NOT TESTED | emulator cannot synthesise a long press |
+| reading progress persists across reopen | PASS | resumed at 6% with 已恢复 note |
+| text cache hit | PASS | footer shows 来自缓存 |
+| button zoom (2 steps to 1.5x) | PASS | image-viewer-zoom.png |
+| pixel cache hit | PARTIAL | miss path logged; hit path not driven reliably on the emulator |
 
 ## Known gaps
 
@@ -63,3 +67,37 @@ The paginator still cuts mid-word at a page boundary rather than backing up to t
 - No word-level wrapping at page boundaries.
 - The image viewer keeps one bitmap at a time; a filmstrip/thumbnail cache is stage 5's next step if the grid view is wanted.
 - `ImageViewer` still allocates a full-screen `Image` node per image; a recycle pool would matter only for rapid bursts.
+
+## Reading progress (added)
+
+services/ReadingProgress.ets keeps a `preferences` store `watch_reading`: one JSON blob per file under `f:<path>` (offset + font size + timestamp) and a global `fontSize`. The reader loads it before the first page, renders from the saved offset, and saves debounced 600 ms after every page turn or font change, plus immediately on close.
+
+Verified on the emulator: read to page 5, left the reader, reopened the same file → resumed at the same paragraph with `6%` in the header and `已恢复`/`来自缓存` in the footer.
+
+Known rough edge: the header still says `第 1 页` after resuming, because page numbers count from the resume point rather than from the file start. The percentage is the honest indicator.
+
+## Caches (added)
+
+`services/MediaCache.ets` holds two bounded caches:
+
+| Cache | Bound | Key | Notes |
+| --- | --- | --- | --- |
+| PixelCache | 6 bitmaps / 40 MB | `realPath | fileSize` | owns the PixelMaps and releases on eviction; the viewer only borrows, otherwise it would free a bitmap the cache still hands out |
+| TextCache | 3 files / 6 MB | `realPath` | avoids re-reading and re-decoding a text file on reopen |
+
+The viewer also pre-decodes the previous and next image after showing the current one, so stepping is instant when it fits in the budget.
+
+Observed: the text cache hit is visible in the reader footer (`来自缓存`), and the viewer log shows `load ... hit=no` on first open. The **pixel cache hit path was not observed end-to-end**: driving the viewer's bottom strip through the emulator's click channel proved unreliable (clicks land but the strip does not always receive them), so only the miss path is logged evidence. The hit path is a dictionary lookup in `PixelCache.get` and is exercised by the prefetch, but should be confirmed on the watch.
+
+## Zoom buttons (added)
+
+The reference UI put `−` and `+` on the screen edges, which is where this viewer previously had its prev/next tap zones. The layout now is:
+
+- edges: `−` / `+` zoom, discrete steps 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0
+- bottom centre: `‹` previous, a badge showing the current factor (tap resets to 1.0 and recentres), `›` next
+- tap on the image toggles the whole chrome, for an unobstructed view
+
+Buttons were chosen over gestures because the emulator cannot synthesise a pinch and a crown-only user has no pinch at all; the discrete steps also avoid the "stuck between two zoom levels" feel of a free pinch. Pan while zoomed is still one finger, clamped to `(scale-1) * screen/2` so the bitmap cannot be flung off-screen.
+
+Verified: two `+` presses move the badge to `1.5x` and visibly magnify the image (`image-viewer-zoom.png`).
+

@@ -2,6 +2,8 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { acquireScreen, releaseScreen } from '../services/ScreenKeeper';
+import { ReadingState, loadReading, saveReading } from '../services/ReadingProgress';
+import { TextCache } from '../services/MediaCache';
 
 class PageSlice {
   text: string = '';
@@ -39,17 +41,47 @@ export struct TextReader {
   @State encoding: string = 'utf-8';
 
   private crownAccum: number = 0;
+  private ctx: common.UIAbilityContext | null = null;
+  private saveTimer: number = -1;
+  private resumed: boolean = false;
   /** offsets of visited pages, so "previous page" is exact */
   private starts: number[] = [0];
 
   aboutToAppear(): void {
     const ctx: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.ctx = ctx;
     acquireScreen(ctx);
     this.load();
   }
 
   aboutToDisappear(): void {
+    if (this.saveTimer >= 0) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = -1;
+    }
+    this.saveNow();
     releaseScreen();
+  }
+
+  private scheduleSave(): void {
+    if (this.saveTimer >= 0) {
+      clearTimeout(this.saveTimer);
+    }
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = -1;
+      this.saveNow();
+    }, 600);
+  }
+
+  private saveNow(): void {
+    const ctx: common.UIAbilityContext | null = this.ctx;
+    if (ctx === null || this.content.length === 0) {
+      return;
+    }
+    const st: ReadingState = new ReadingState();
+    st.offset = this.pageStart;
+    st.fontSize = this.fontSize;
+    saveReading(ctx, this.realPath, st);
   }
 
   private readAll(): number[] {
@@ -121,18 +153,37 @@ export struct TextReader {
     }
   }
 
-  private load(): void {
-    const bytes: number[] = this.readAll();
-    if (this.error.length > 0) {
-      return;
+  private async load(): Promise<void> {
+    const key: string = this.realPath;
+    const cached: string | undefined = TextCache.instance().get(key);
+    if (cached !== undefined) {
+      this.content = cached;
+      this.note = '来自缓存';
+    } else {
+      const bytes: number[] = this.readAll();
+      if (this.error.length > 0) {
+        return;
+      }
+      if (bytes.length >= MAX_BYTES) {
+        this.note = '文件较大，仅显示前 2 MB';
+      }
+      this.content = this.decode(bytes).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      TextCache.instance().put(key, this.content);
     }
-    if (bytes.length >= MAX_BYTES) {
-      this.note = '文件较大，仅显示前 2 MB';
+    const ctx: common.UIAbilityContext | null = this.ctx;
+    let offset: number = 0;
+    if (ctx !== null) {
+      const st: ReadingState = await loadReading(ctx, key);
+      this.fontSize = Math.min(20, Math.max(9, st.fontSize));
+      offset = Math.max(0, Math.min(this.content.length, st.offset));
+      this.resumed = offset > 0;
     }
-    this.content = this.decode(bytes).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     this.starts = [0];
     this.pageIndex = 0;
-    this.renderFrom(0);
+    this.renderFrom(offset);
+    if (this.resumed && this.note.length === 0) {
+      this.note = `已恢复 ${this.progress}%`;
+    }
   }
 
   /** Characters per page for the current font size on a 233 vp canvas. */
@@ -214,6 +265,7 @@ export struct TextReader {
     this.pageTextState = slice.text;
     this.nextStart = slice.next;
     this.progress = this.content.length === 0 ? 0 : Math.min(100, Math.floor((start * 100) / this.content.length));
+    this.scheduleSave();
   }
 
   private nextStart: number = 0;
@@ -358,6 +410,7 @@ export struct TextReader {
     })
   }
 }
+
 
 
 

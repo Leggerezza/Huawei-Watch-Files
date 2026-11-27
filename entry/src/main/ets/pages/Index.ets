@@ -315,6 +315,16 @@ struct Index {
     this.screen = 'image';
   }
 
+  /** Real path of the image `delta` steps away in the current image list. */
+  private neighborReal(delta: number): string {
+    const store: FsStore | null = this.store;
+    if (store === null || this.imageList.length < 2) {
+      return '';
+    }
+    const idx: number = (this.imageIndex + delta + this.imageList.length) % this.imageList.length;
+    return store.real(this.imageList[idx].path);
+  }
+
   private stepImage(delta: number): void {
     if (this.imageList.length === 0) {
       return;
@@ -875,6 +885,8 @@ struct Index {
           fileSize: this.openSize,
           ordinal: this.imageIndex + 1,
           total: this.imageList.length,
+          prevReal: this.neighborReal(-1),
+          nextReal: this.neighborReal(1),
           onClose: () => {
             this.screen = 'browse';
           },
