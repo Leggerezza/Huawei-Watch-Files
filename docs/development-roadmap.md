@@ -8,7 +8,7 @@ State after this round. Status words are the ones the brief asked for: PASS / FA
 | --- | --- | --- | --- |
 | 0 | audit + baseline | PASS | `audit-phase0.md`; baseline suite re-run |
 | 1 | storage / transport / media layering | PASS | `ServerHub`, `Metadata`, `MediaBackend`, `FsStore` additions; verified on device (see below) |
-| 2 | file manager UI | DESIGN DONE | `file-manager-design.md`: four tabs, filter-over-tree buckets, lazy rows, detail sheet, mutation set, per-step emulator verification |
+| 2 | file manager UI | PARTIAL | slice 1 shipped and verified on the emulator: four tabs, bucket overview, filtered bucket list, directory browse, recent list, service pane. Detail sheet, mutations and pull-to-refresh still pending |
 | 3 | FTP consistency + hardening | PASS | filing off for FTP, fail-closed RNG, 8-connection cap, idle sweep; suite 65/65 |
 | 4 | HTTP file service | PARTIAL | implementation complete; device login flow still failing, see regression report |
 | 5 | image viewer + thumbnails | NOT STARTED | `ImageSource` + `desiredSize` plan in the decode report |

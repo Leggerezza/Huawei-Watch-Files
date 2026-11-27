@@ -48,6 +48,25 @@ Two defects were found and fixed while getting here:
 1. `STOR` of a small file intermittently stored 0 bytes. Root cause: the passive data connection's `message` listener was attached in the transfer handler, so a client that wrote its payload and closed before the command was parsed lost the bytes when the socket layer closed the connection. Fix: attach a collector in the `connect` callback and drain it into the sink.
 2. The suite's control socket timeout was 8 s, shorter than an 8 MB transfer, so a slow but correct transfer looked like a dropped connection. Fixed to 120 s.
 
+## Stage 2 slice 1: file manager
+
+Verified on the wearable emulator (466x466, API 23) with the emulator's own automation channel: `-uiLayout -i` for widget ids and bounds, `-click` to actuate, `-screenshot` for evidence.
+
+| Check | Result |
+| --- | --- |
+| bucket overview shows six buckets with item counts and bytes | PASS |
+| tapping `Images` opens the filtered list (3 files with sizes) | PASS |
+| directory tab lists the six bucket folders | PASS |
+| recent tab lists files newest-first | PASS |
+| service tab shows state, IP, both ports, credentials and log lines | PASS |
+| all six buckets fit without scrolling on the round screen | PASS |
+
+Measured from the widget tree: header 26 vp, row 28 vp, tab bar 30 vp, at density 2 (1 vp = 2 px), so the layout canvas is **233x233 vp**, not 466. The first build treated 466 as vp, which made every row 80 px and left only three buckets visible; that is why the design doc's original "44 px row" figure was wrong and has been corrected.
+
+Screenshots: [file-manager-buckets.png](file-manager-buckets.png), [file-manager-images.png](file-manager-images.png), [file-manager-dir.png](file-manager-dir.png), [file-manager-recent.png](file-manager-recent.png), [file-manager-service.png](file-manager-service.png).
+
+Not in this slice: detail sheet, delete/rename/move/copy, thumbnails, pull-to-refresh, and the "long press for full name" behaviour - the row currently shows a toast with name, kind, size and playability instead.
+
 ## Stage 1 verification
 
 Build 486 KB, installed 22:50, `ServerHub` owning both transports.

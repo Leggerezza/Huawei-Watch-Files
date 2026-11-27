@@ -30,28 +30,43 @@ Consequence: the bucket view scans. On 10 GB of files that is a full tree walk, 
 - cache the result keyed by directory mtime; invalidate on any write operation the app performs;
 - never block the first frame on the walk.
 
-## Screen layout
+## Screen metrics (measured, not assumed)
+
+The watch reports **466x466 px at density 2**, so the ArkUI canvas is **233x233 vp**. Treating 466 as vp - the first thing this design did - doubles every row and only three buckets fit. The numbers below are what actually shipped and were verified with a screenshot plus the emulator's widget tree:
+
+| Element | vp | px |
+| --- | --- | --- |
+| header | 26 | 52 |
+| list row | 28 | 56 |
+| tab bar | 30 | 60 |
+| body font | 10 | ~20 |
+| meta font | 7 | ~14 |
+
+Six bucket rows (168 vp) + header (26) + tabs (30) = 224 vp, which fits 233 with 9 vp left over. The circle still clips the extreme corners, which is why the list keeps a 4 vp top/bottom inset and no row text sits in the outer 20 vp.
+
+## Layout
 
 ```
-┌ 466x466 round ────────────────┐
-│  Images            12 项  ⚙   │  header: current view, count, (settings)
-│  ────────────────────────────  │
-│  🖼  假期照片.jpg        470 KB │  row: icon, name (ellipsised), meta
-│  🖼  screenshot-01.png   1.2 MB│
-│      …                        │
-│  ────────────────────────────  │
-│  [分类] [目录] [最近] [传输]     │  bottom tabs, 4 items max
+┌ 233x233 vp round ─────────────┐
+│ ‹  分类            名称↑       │  header 26 vp: back, title, sort
+│  🖼  Images     3 · 429.7 KB  │  row 28 vp
+│  🎬  Videos     1 · 878.9 KB  │
+│  🎵  Audio      1 · 293.0 KB  │
+│  📄  Documents  3 · 44.1 KB   │
+│  🗜  Archives   1 · 14.6 KB   │
+│  📦  Others     1 · 4.9 KB    │
+│  分类   目录   最近   服务      │  tab bar 30 vp
 └───────────────────────────────┘
 ```
 
 Rules taken from the round screen:
 
-- **Safe area**: content is a square inscribed in the circle; the top and bottom 40 px are reserved for tabs/status, never for row text. Rows are clipped with a fade at the extremes.
-- **Row height 44 px minimum**, one row = one touch target; the whole row opens the file.
-- **Name ellipsis at 18 characters**, long-press shows the full name in a small sheet with size, mtime, MIME, container, codec, playability.
-- **No nested menus**: row → detail sheet → action buttons in the sheet, at most two levels.
-- **List virtualisation**: ArkUI `List` + `LazyForEach` with an `IDataSource`; never build a `Column` of 500 rows.
-- **Scrolling**: `List` with `edgeEffect: Spring`; the round screen makes the first/last item partially visible, so add 24 px top/bottom padding inside the list.
+- **Safe area**: content stays inside the square inscribed in the circle; the outer ring is never used for text.
+- **One row = one touch target** (28 vp ≈ 56 px ≈ 4.7 mm); tapping anywhere in the row opens the file.
+- **Name ellipsis at 12 characters**, the full name appears in the detail toast/sheet.
+- **No nested menus**: row → detail sheet → actions, at most two levels.
+- **List virtualisation**: ArkUI `List` + `LazyForEach` over an `IDataSource`; never a `Column` of every file.
+- **Scrolling**: the list scrolls only when it has to; the bucket overview fits without scrolling by design.
 
 ## Interactions
 
