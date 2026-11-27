@@ -12,13 +12,33 @@ param(
     [Parameter(Mandatory)][string]$User,
     [Parameter(Mandatory)][string]$Pass,
     [int]$LargeMb = 8,
-    [switch]$TestLockout
+    [switch]$TestLockout,
+    # Emulator testing: every PASV data port needs its own hdc forward,
+    # because only the control port is forwarded ahead of time.
+    [string]$HdcDevice = ''
 )
+
+$HDC = 'D:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe'
 
 $ErrorActionPreference = 'Stop'
 $script:Passed = 0
 $script:Failed = 0
 $script:Failures = @()
+$script:Forwarded = @()
+$script:LastForward = 0
+
+# Closes a data socket and drops the per-transfer hdc forward immediately:
+# hdc stops accepting new forwards once enough of them pile up.
+function Close-Pasv {
+    param($DataClient)
+    if ($DataClient -ne $null) {
+        try { $DataClient.Close() } catch { }
+    }
+    if ($HdcDevice -ne '' -and $script:LastForward -gt 0) {
+        & $HDC -t $HdcDevice fport rm "tcp:$($script:LastForward)" "tcp:$($script:LastForward)" 2>&1 | Out-Null
+        $script:LastForward = 0
+    }
+}
 
 function Check {
     param([string]$Name, [bool]$Ok, [string]$Detail = '')
@@ -98,9 +118,26 @@ function Open-Pasv {
     $line = $r[-1]
     if ($line -notmatch '\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)') { throw "PASV failed: $line" }
     $dport = [int]$Matches[5] * 256 + [int]$Matches[6]
-    $d = New-Object System.Net.Sockets.TcpClient
     $peer = $Conn.Client.Client.RemoteEndPoint.Address
-    $d.Connect($peer, $dport)
+    if ($HdcDevice -ne '') {
+        & $HDC -t $HdcDevice fport "tcp:$dport" "tcp:$dport" 2>&1 | Out-Null
+        $script:LastForward = $dport
+        Start-Sleep -Milliseconds 150
+    }
+    # The forward can take a moment to become active, so retry the connect.
+    $d = $null
+    for ($i = 0; $i -lt 20; $i++) {
+        $candidate = New-Object System.Net.Sockets.TcpClient
+        try {
+            $candidate.Connect($peer, $dport)
+            $d = $candidate
+            break
+        } catch {
+            try { $candidate.Close() } catch { }
+            Start-Sleep -Milliseconds 150
+        }
+    }
+    if ($null -eq $d) { throw "data connection refused after retries: $dport" }
     $d.ReceiveTimeout = 20000
     return $d
 }
@@ -124,7 +161,7 @@ function Invoke-Download {
     $d = Open-Pasv $Conn
     $r = @(Send-Cmd $Conn "RETR $Path")
     $bytes = Read-AllBytes $d
-    $d.Close()
+    Close-Pasv $d
     $end = @(Read-Reply $Conn.Stream $Conn.Enc)
     return @{ Reply = ($r -join ' | '); Bytes = $bytes; End = ($end -join ' | ') }
 }
@@ -134,7 +171,7 @@ function Invoke-Listing {
     $d = Open-Pasv $Conn
     $r = @(Send-Cmd $Conn $Cmd)
     $bytes = Read-AllBytes $d
-    $d.Close()
+    Close-Pasv $d
     $end = @(Read-Reply $Conn.Stream $Conn.Enc)
     return @{ Reply = ($r -join ' | '); Bytes = $bytes; End = ($end -join ' | ') }
 }
@@ -147,7 +184,7 @@ function Invoke-Upload {
     $ds = $d.GetStream()
     $ds.Write($Bytes, 0, $Bytes.Length)
     $ds.Flush()
-    $d.Close()
+    Close-Pasv $d
     $end = @(Read-Reply $Conn.Stream $Conn.Enc)
     return @{ Reply = ($r -join ' | '); End = ($end -join ' | ') }
 }
@@ -277,7 +314,7 @@ Check 'REST accepted with 350' ($r[-1] -like '350*') $r[-1]
 $d = Open-Pasv $c
 $r = @(Send-Cmd $c 'RETR rest.txt')
 $tail = Read-AllBytes $d
-$d.Close()
+Close-Pasv $d
 $null = Read-Reply $c.Stream $c.Enc
 Check 'RETR after REST 4 returns the tail' ([Text.Encoding]::ASCII.GetString($tail) -eq '456789') ([Text.Encoding]::ASCII.GetString($tail))
 $null = Send-Cmd $c 'DELE rest.txt'
@@ -327,7 +364,7 @@ Check 'NLST lists 5 uploaded files' ($count -eq 5) "count=$count"
 $d = Open-Pasv $c
 $r = @(Send-Cmd $c 'MLSD')
 $mlsdText = [Text.Encoding]::UTF8.GetString((Read-AllBytes $d))
-$d.Close()
+Close-Pasv $d
 $null = Read-Reply $c.Stream $c.Enc
 Check 'MLSD lists the same 5 files' ((($mlsdText -split "`r`n") | Where-Object { $_ -match 'many\d\.txt' }).Count -ge 5)
 foreach ($n in 1..5) { $null = Send-Cmd $c "DELE many$n.txt" }
@@ -430,6 +467,13 @@ if ($TestLockout) {
         Check 'valid credentials work again after the cooldown' ($r[-1] -like '230*') $r[-1]
         Close-Control $lc
     }
+}
+
+if ($HdcDevice -ne '' -and $script:Forwarded.Count -gt 0) {
+    foreach ($p in $script:Forwarded) {
+        & $HDC -t $HdcDevice fport rm "tcp:$p" "tcp:$p" 2>&1 | Out-Null
+    }
+    Write-Host ("  cleaned {0} forwarded data port(s)" -f $script:Forwarded.Count)
 }
 
 Write-Host "`n================================================" -ForegroundColor Cyan

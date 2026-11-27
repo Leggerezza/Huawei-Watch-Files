@@ -21,7 +21,28 @@ So even if the task were granted, our current code would lose it after ten minut
 
 Error codes the same call can raise: `201` permission, `9800001` memory, `9800002` parcel, `9800003` internal, `9800004` service, `9800005` verification, `9800006` notification verification, `9800007` storage. We get `9800005`, the generic verification failure, not `9800006` (notification) — so the refusal happens before or independently of the notification path.
 
-## Hypotheses, in order of likelihood
+## Result: every mode is rejected, and the system says why
+
+`BackgroundProbe.ets` asks for four modes in turn and logs the answer. Run on the wearable emulator (`HarmonyOS 6.1.0(23)`, API 23, deviceType wearable - the same shape as the watch):
+
+```
+WatchBg: notifications enabled: false
+WatchBg: DATA_TRANSFER: code=9800005 BussinessError 9800005: Continuous Task verification failed. The bgMode is invalid.
+WatchBg: MULTI_DEVICE_CONNECTION: code=9800005 ... The bgMode is invalid.
+WatchBg: BLUETOOTH_INTERACTION: code=9800005 ... The bgMode is invalid.
+WatchBg: AUDIO_PLAYBACK: code=9800005 ... The bgMode is invalid.
+```
+
+`The bgMode is invalid` is the system's own wording. That settles the hypotheses below: it is not the want agent, not notification enablement (notification state was `false`, yet the message names the mode), and not one unlucky mode - **a wearable does not accept any continuous task for a third-party app**. The physical watch returned the same `9800005` before this probe existed.
+
+## Consequence for the product
+
+- Background execution is unavailable on this device type. No code change reaches it.
+- The file manager is foreground-only by design: the page must stay visible while a transfer runs.
+- A future "keep serving with the screen off" requirement cannot be met here without a platform change; the honest options are to keep the app on screen, or to move long transfers to the phone side.
+- `DATA_TRANSFER` would additionally have required a progress update every 10 minutes and a live-view notification, so even a granted task would need upkeep. That work is now moot on wearables and should not be written.
+
+## Hypotheses that were tested (kept for the record)
 
 1. **The wearable product does not grant DATA_TRANSFER to third-party apps.** Continuous-task availability is a product policy, not only an API question. A watch that never runs browser downloads has little reason to allow it.
 2. **Our want agent is not acceptable.** We build it from `ctx.abilityInfo.bundleName` / `.name`. If the verifier wants a `START_ABILITY` agent whose ability is the same UIAbility *and* exported, a mismatch would surface as a generic verification failure.

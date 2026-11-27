@@ -47,10 +47,12 @@ Nothing above has been claimed as working. The earlier capability report (`watch
 
 ## Test environment
 
-The physical watch is not always reachable, so two substitutes are in place:
+The physical watch is not always reachable, so two substitutes are in place and both are now proven:
 
-- **Chrome (chrome-devtools MCP, isolated context)** for everything web-facing: the served page, its layout, console and network. Already used for the login/upload/download/delete pass.
-- **HarmonyOS emulator** for on-device behaviour. Its CLI exposes `-create -deviceType Wearable`, `-start -noWindow -hdcPort`, and a scenario channel (`-uiLayout`, `-click`, `-fill`, `-screenshot`), which is exactly what the file manager needs for automated verification. A wearable image for `HarmonyOS 6.1.0(23)` - the watch's API level - exists in the image list and was downloading at the time of writing. Two open questions: whether the debug signing profile accepts the emulator's UDID, and whether a wearable image boots headless on this machine.
+- **Chrome (chrome-devtools MCP, isolated context)** for everything web-facing: the served page, its layout, console and network. Used for the login/upload/download/delete pass.
+- **Wearable emulator** for on-device behaviour. Instance `watch_dev`, image `HarmonyOS 6.1.0(23)`, 466x466 - the same device type and API as the watch. The debug-signed HAP installs directly, and `hdc fport` exposes the servers to the PC. Both suites pass against it (FTP 65/65, HTTP 22/22). Setup, port-forwarding details and the automation channel are in `emulator-workflow.md`.
+
+What the emulator cannot answer: real performance, real power/thermal behaviour, and the continuous-task question - the emulator rejects every mode with `9800005 ... The bgMode is invalid`, exactly like the watch.
 
 ## Known debt
 
