@@ -1,6 +1,7 @@
 import { common, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { ServerHub, ServerStatus } from '../services/ServerHub';
+import { probeBackgroundModes } from '../services/BackgroundProbe';
 import { getLocalIpv4 } from '../services/NetInfo';
 
 function two(n: number): string {
@@ -118,6 +119,8 @@ struct Index {
         const ctx: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
         this.ip = await getLocalIpv4();
         await hub.start(ctx.filesDir, this.ip);
+        // Diagnostic: learn which continuous-task modes this product grants.
+        probeBackgroundModes(ctx);
         await this.acquireKeepAlive();
       }
     } catch (e) {

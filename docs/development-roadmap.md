@@ -8,7 +8,7 @@ State after this round. Status words are the ones the brief asked for: PASS / FA
 | --- | --- | --- | --- |
 | 0 | audit + baseline | PASS | `audit-phase0.md`; baseline suite re-run |
 | 1 | storage / transport / media layering | PASS | `ServerHub`, `Metadata`, `MediaBackend`, `FsStore` additions; verified on device (see below) |
-| 2 | file manager UI | NOT STARTED | the browser page covers browsing from a phone, not on the watch |
+| 2 | file manager UI | DESIGN DONE | `file-manager-design.md`: four tabs, filter-over-tree buckets, lazy rows, detail sheet, mutation set, per-step emulator verification |
 | 3 | FTP consistency + hardening | PASS | filing off for FTP, fail-closed RNG, 8-connection cap, idle sweep; suite 65/65 |
 | 4 | HTTP file service | PARTIAL | implementation complete; device login flow still failing, see regression report |
 | 5 | image viewer + thumbnails | NOT STARTED | `ImageSource` + `desiredSize` plan in the decode report |
@@ -38,12 +38,19 @@ Nothing above has been claimed as working. The earlier capability report (`watch
 
 ## Next steps, in order
 
-1. Fix the HTTP login rejection and finish `Test-Http.ps1` (device is intermittently asleep; this is the only blocker).
-2. Add the watch-side file manager page (stage 2): read `FsStore` directly, list the six buckets, open a file by type.
+1. Fix the HTTP login rejection and finish `Test-Http.ps1` (device is intermittently asleep; this is the only blocker). **Done in the previous round: 22/22.**
+2. Add the watch-side file manager page (stage 2) - design in `file-manager-design.md`; start with the list + navigation slice.
 3. Image viewer (stage 5) - smallest user-visible win, and `ImageSource` is already proven on this device.
 4. Audio player (stage 6) - `AVPlayer` + `fdSrc`, plus a `AUDIO_PLAYBACK` continuous task; verify background and screen-off behaviour.
 5. H.264 video (stage 7) with the exact state machine from the probe report.
 6. Only then start the FFmpeg probe project, in its own directory and its own bundle.
+
+## Test environment
+
+The physical watch is not always reachable, so two substitutes are in place:
+
+- **Chrome (chrome-devtools MCP, isolated context)** for everything web-facing: the served page, its layout, console and network. Already used for the login/upload/download/delete pass.
+- **HarmonyOS emulator** for on-device behaviour. Its CLI exposes `-create -deviceType Wearable`, `-start -noWindow -hdcPort`, and a scenario channel (`-uiLayout`, `-click`, `-fill`, `-screenshot`), which is exactly what the file manager needs for automated verification. A wearable image for `HarmonyOS 6.1.0(23)` - the watch's API level - exists in the image list and was downloading at the time of writing. Two open questions: whether the debug signing profile accepts the emulator's UDID, and whether a wearable image boots headless on this machine.
 
 ## Known debt
 
