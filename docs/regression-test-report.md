@@ -1,5 +1,7 @@
 # Regression test report
 
+> Hardware run: see [real-device-verification.md](real-device-verification.md) - FTP 65/65, HTTP 22/22, reader progress, viewer zoom and the detail sheet all verified on the physical watch.
+
 Device: HUAWEI WATCH 5 `RTS-AL00`, OpenHarmony 6.1.0.125 / API 23.
 Build under test: `entry-default-signed.hap`, 436 KB, bundle `io.github.leggerezza.files`, installed 2026-11-26 22:08.
 Markers: PASS / FAIL / PARTIAL / BLOCKED / NOT TESTED.
@@ -152,3 +154,4 @@ Recorded as FAIL. The app does not claim background service; the roadmap item is
 - The watch leaves Wi-Fi entirely after idle + screen off; three test attempts in this round had to wait for it to be physically woken.
 - HDC address changed twice: `192.168.137.223:34041` -> `192.168.137.95:41467`. Scripts take the address as a parameter for this reason.
 - Reading the on-screen credentials from a 466x466 screenshot is error-prone (`kzxryy` was first misread as `kzrry`). The test flow now crops and upscales the credential line before reading.
+

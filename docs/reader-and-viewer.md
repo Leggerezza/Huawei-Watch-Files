@@ -51,15 +51,16 @@ The paginator still cuts mid-word at a page boundary rather than backing up to t
 | image decode failure state | PASS | fake-JPEG sample shows `无法解码` |
 | reader opens a UTF-8 file, 31 pages at 11 vp | PASS | `text-reader-11vp.png` |
 | font size A+ to 14 vp, re-paginates | PASS | `text-reader-14vp.png` |
-| reader tap paging | PASS | page advanced on a bottom tap |
+| reader tap paging | PASS | page advanced on a bottom tap (watch: 第 1 页 → 第 3 页) |
+| reading progress on hardware | PASS | resumed at 6% after close/reopen on the watch |
 | keep screen on | PASS | hilog `WatchScreen: keep screen on: true` |
-| crown paging (reader and viewer) | NOT TESTED | the emulator has no crown input; needs the watch |
+| crown paging (reader and viewer) | NOT TESTED | HDC has no crown injection path |
 | pinch zoom / pan | NOT TESTED | emulator cannot synthesise multi-touch pinch; button zoom replaced it |
 | long-press detail sheet + rename/copy/move/delete | NOT TESTED | emulator cannot synthesise a long press |
 | reading progress persists across reopen | PASS | resumed at 6% with 已恢复 note |
 | text cache hit | PASS | footer shows 来自缓存 |
 | button zoom (2 steps to 1.5x) | PASS | image-viewer-zoom.png |
-| pixel cache hit | PARTIAL | miss path logged; hit path not driven reliably on the emulator |
+| pixel cache hit | PASS | on the watch: `WatchViewer load … hit=no` then `hit=yes` |
 
 ## Known gaps
 
@@ -100,4 +101,5 @@ The reference UI put `−` and `+` on the screen edges, which is where this view
 Buttons were chosen over gestures because the emulator cannot synthesise a pinch and a crown-only user has no pinch at all; the discrete steps also avoid the "stuck between two zoom levels" feel of a free pinch. Pan while zoomed is still one finger, clamped to `(scale-1) * screen/2` so the bitmap cannot be flung off-screen.
 
 Verified: two `+` presses move the badge to `1.5x` and visibly magnify the image (`image-viewer-zoom.png`).
+
 
