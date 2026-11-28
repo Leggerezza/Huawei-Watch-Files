@@ -28,11 +28,18 @@ With diameter 466 the safe square is 466/√2 ≈ **330 px, i.e. x and y in 68..
 
 Six rows of 22 vp = 132 vp; plus header 18 + paddings 30 + 24 + 6 = 210 vp of the 233 available, so the six buckets still fit without scrolling.
 
+## Controls live outside the square
+
+The circle has four "ears" outside the inscribed square - at mid-height the full 466 px width is visible. Buttons belong there, not in the page flow:
+
+- reader: `A-` and `A+` are vertical pills on the left/right edge at mid-height; the body then owns the whole square
+- viewer: `-` and `+` were already on the edges for the same reason
+
 ## Reader
 
-- Root padding 30 vp top / 26 vp bottom, body 40 px (20 vp) side padding.
-- The paginator's budget is now **186 x 126 vp** - measured, not guessed. Earlier budgets (210x168, then 200x138, then 186x112) either overflowed or wasted a third of the screen.
-- The body container also `clip(true)`s, so even a mis-paginated page can never paint over the footer.
+- Root padding 26 vp top / 18 vp bottom, body 34 vp side padding (exactly the inscribed square).
+- The paginator's budget is **165 x 150 vp**. The earlier 186 x 126 wasted vertical space on a footer that no longer exists, and before that the body overflowed and painted over the buttons.
+- The body container also `clip(true)`s, so even a mis-paginated page can never paint over the header or the note.
 - **Glyph width calibration**: the paginator models a Latin glyph as 0.68 em and a space as 0.35 em. The first estimate was 0.55, which made every modelled line wrap into about 1.15 visual lines and pushed one extra line onto every page. CJK stays at 1.0 em.
 
 ## Image viewer
