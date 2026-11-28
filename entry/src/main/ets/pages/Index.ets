@@ -11,9 +11,16 @@ import { ImageViewer } from '../components/ImageViewer';
 import { TextReader } from '../components/TextReader';
 
 // 466x466 px at density 2 => 233x233 vp of layout space.
-const ROW_VP: number = 28;
-const TAB_VP: number = 30;
-const HEADER_VP: number = 26;
+// Round screen: only the inscribed circle is visible, so the safe square is
+// 330 px (x,y inside 68..398). Fixed chrome keeps ~42 vp of side padding; the
+// list uses the wider band around the vertical centre.
+const ROW_VP: number = 22;
+const TAB_VP: number = 18;
+const HEADER_VP: number = 18;
+const TOP_PAD_VP: number = 30;
+const BOTTOM_PAD_VP: number = 24;
+const SIDE_PAD_VP: number = 42;
+const ROW_PAD_VP: number = 28;
 const BUCKETS: string[] = ['Images', 'Videos', 'Audio', 'Documents', 'Archives', 'Others'];
 
 function two(n: number): string {
@@ -415,7 +422,7 @@ struct Index {
   tabItem(index: number, label: string) {
     Column() {
       Text(label)
-        .fontSize(this.tab === index ? 11 : 10)
+        .fontSize(this.tab === index ? 8.5 : 8)
         .fontWeight(this.tab === index ? FontWeight.Bold : FontWeight.Normal)
         .fontColor(this.tab === index ? '#FFFFFF' : '#6B7280')
     }
@@ -493,25 +500,25 @@ struct Index {
     }
     .width('100%')
     .height(HEADER_VP)
-    .padding({ left: 4, right: 4 })
+    .padding({ left: SIDE_PAD_VP, right: SIDE_PAD_VP })
   }
 
   @Builder
   fileRow(item: FileItem, index: number) {
     Row({ space: 4 }) {
       Text(iconOf(item))
-        .fontSize(11)
-        .width(16)
+        .fontSize(10)
+        .width(14)
         .textAlign(TextAlign.Center)
       Column({ space: 0 }) {
-        Text(shortName(item.name, 12))
-          .fontSize(10)
+        Text(shortName(item.name, 11))
+          .fontSize(9)
           .fontColor('#E5E7EB')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
         Text(item.isDir ? '目录' : fmtSize(item.size))
-          .fontSize(7)
+          .fontSize(6.5)
           .fontColor('#6B7280')
           .width('100%')
       }
@@ -520,7 +527,7 @@ struct Index {
     }
     .width('100%')
     .height(ROW_VP)
-    .padding({ left: 6, right: 6 })
+    .padding({ left: ROW_PAD_VP, right: ROW_PAD_VP })
     .onClick(() => {
       this.onRowTap(item);
     })
@@ -536,11 +543,11 @@ struct Index {
   bucketRow(stat: BucketStat) {
     Row({ space: 4 }) {
       Text(bucketIcon(stat.name))
-        .fontSize(11)
-        .width(16)
+        .fontSize(10)
+        .width(14)
         .textAlign(TextAlign.Center)
       Text(stat.name)
-        .fontSize(10)
+        .fontSize(9)
         .fontColor('#E5E7EB')
         .layoutWeight(1)
         .maxLines(1)
@@ -550,7 +557,7 @@ struct Index {
     }
     .width('100%')
     .height(ROW_VP)
-    .padding({ left: 6, right: 6 })
+    .padding({ left: ROW_PAD_VP, right: ROW_PAD_VP })
     .onClick(async () => {
       const vm: FileListView | null = this.vm;
       if (vm !== null) {
@@ -576,7 +583,7 @@ struct Index {
         .width('100%')
         .layoutWeight(1)
         .scrollBar(BarState.Off)
-        .padding({ top: 4, bottom: 4 })
+        .padding({ top: 6, bottom: 0 })
       } else {
         List() {
           ForEach(this.items, (item: FileItem, index: number) => {
@@ -589,7 +596,7 @@ struct Index {
         .width('100%')
         .layoutWeight(1)
         .scrollBar(BarState.Off)
-        .padding({ top: 4, bottom: 4 })
+        .padding({ top: 6, bottom: 0 })
       }
       if (this.note.length > 0) {
         Text(this.note)
@@ -721,8 +728,8 @@ struct Index {
           })
       }
     }
-    .width(200)
-    .padding(10)
+    .width(150)
+    .padding(8)
     .backgroundColor('#151922')
     .borderRadius(12)
     .border({ width: 1, color: '#2B3444' })
@@ -807,8 +814,8 @@ struct Index {
           })
       }
     }
-    .width(200)
-    .padding(10)
+    .width(150)
+    .padding(8)
     .backgroundColor('#151922')
     .borderRadius(12)
     .border({ width: 1, color: '#2B3444' })
@@ -849,7 +856,7 @@ struct Index {
           this.moveMode = '';
         })
     }
-    .width(190)
+    .width(150)
     .padding(8)
     .backgroundColor('#151922')
     .borderRadius(12)
@@ -870,13 +877,16 @@ struct Index {
           this.tabItem(2, '最近')
           this.tabItem(3, '服务')
         }
-        .width('100%')
+        .width(160)
         .height(TAB_VP)
-        .backgroundColor('#151922')
-        .border({ width: { top: 1 }, color: '#232A36' })
+        .backgroundColor('#15192280')
+        .borderRadius(TAB_VP / 2)
       }
       .width('100%')
       .height('100%')
+      // Everything except the full-screen viewer/overlays lives inside the
+      // inscribed circle; the padding is on this Column, not on the Stack.
+      .padding({ top: TOP_PAD_VP, bottom: BOTTOM_PAD_VP })
 
       if (this.screen === 'image') {
         ImageViewer({
@@ -959,5 +969,8 @@ class FileDataPlaceholder implements IDataSource {
   unregisterDataChangeListener(listener: DataChangeListener): void {
   }
 }
+
+
+
 
 

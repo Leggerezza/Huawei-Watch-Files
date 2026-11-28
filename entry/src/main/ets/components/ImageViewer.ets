@@ -267,7 +267,8 @@ export struct ImageViewer {
         }
         .width('100%')
         .height(24)
-        .padding({ left: 8, right: 8 })
+        .margin({ top: 28 })
+        .padding({ left: 42, right: 42 })
 
         // Zoom on the edges, exactly where the reference UI put it.
         Column() {
@@ -343,7 +344,7 @@ export struct ImageViewer {
           .fontColor('#93C5FD')
           .width('100%')
           .textAlign(TextAlign.Center)
-          .margin({ top: 26 })
+          .margin({ top: 54 })
           .hitTestBehavior(HitTestMode.Transparent)
       }
     }
@@ -354,4 +355,5 @@ export struct ImageViewer {
     })
   }
 }
+
 

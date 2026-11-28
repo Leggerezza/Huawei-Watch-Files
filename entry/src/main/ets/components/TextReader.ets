@@ -203,9 +203,11 @@ export struct TextReader {
       return 1;
     }
     if (ch === ' ') {
-      return 0.3;
+      return 0.35;
     }
-    return 0.55;
+    // Latin glyphs in this font are ~0.68 em wide, not the 0.55 first assumed:
+    // estimating narrow made every modelled line wrap into ~1.15 visual lines.
+    return 0.68;
   }
 
   /**
@@ -218,9 +220,9 @@ export struct TextReader {
    */
   private layoutPage(start: number): PageSlice {
     const out: PageSlice = new PageSlice();
-    const perLineUnits: number = Math.max(4, (200 / this.fontSize) * 1.0);
+    const perLineUnits: number = Math.max(4, (186 / this.fontSize) * 1.0);
     const lineHeight: number = this.fontSize * 1.55;
-    const maxLines: number = Math.max(1, Math.floor(138 / lineHeight));
+    const maxLines: number = Math.max(1, Math.floor(112 / lineHeight));
     let units: number = 0;
     let lines: number = 1;
     let i: number = start;
@@ -331,7 +333,7 @@ export struct TextReader {
           .fontColor('#9CA3AF')
       }
       .width('100%')
-      .padding({ left: 8, right: 8, top: 4 })
+      .padding({ left: 42, right: 42, top: 2 })
 
       if (this.error.length > 0) {
         Column({ space: 6 }) {
@@ -356,7 +358,8 @@ export struct TextReader {
         }
         .width('100%')
         .layoutWeight(1)
-        .padding({ left: 10, right: 10, top: 2 })
+        .padding({ left: 40, right: 40, top: 2 })
+        .clip(true)
         .alignItems(HorizontalAlign.Start)
         .onClick((event: ClickEvent) => {
           // Top quarter goes back, bottom quarter goes forward, middle is inert.
@@ -400,16 +403,21 @@ export struct TextReader {
       }
       .width('100%')
       .height(26)
-      .padding({ left: 8, right: 8 })
+      .padding({ left: 42, right: 42 })
     }
     .width('100%')
     .height('100%')
+    .padding({ top: 30, bottom: 26 })
     .backgroundColor('#0B0E14')
     .onDigitalCrown((event: CrownEvent) => {
       this.onCrown(event);
     })
   }
 }
+
+
+
+
 
 
 
