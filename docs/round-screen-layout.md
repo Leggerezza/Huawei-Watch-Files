@@ -31,7 +31,7 @@ Six rows of 22 vp = 132 vp; plus header 18 + paddings 30 + 24 + 6 = 210 vp of th
 ## Reader
 
 - Root padding 30 vp top / 26 vp bottom, body 40 px (20 vp) side padding.
-- The paginator's budget is now **186 x 112 vp** - measured, not guessed. Earlier budgets (210x168, then 200x138) overflowed and the last line was drawn over the A-/A+ buttons.
+- The paginator's budget is now **186 x 126 vp** - measured, not guessed. Earlier budgets (210x168, then 200x138, then 186x112) either overflowed or wasted a third of the screen.
 - The body container also `clip(true)`s, so even a mis-paginated page can never paint over the footer.
 - **Glyph width calibration**: the paginator models a Latin glyph as 0.68 em and a space as 0.35 em. The first estimate was 0.55, which made every modelled line wrap into about 1.15 visual lines and pushed one extra line onto every page. CJK stays at 1.0 em.
 
@@ -43,6 +43,10 @@ Six rows of 22 vp = 132 vp; plus header 18 + paddings 30 + 24 + 6 = 210 vp of th
 
 ## Verification
 
+Confirmed on the hardware as well (masked `snapshot_display` captures): `circle-buckets-watch.png`, `circle-reader-watch.png`, `circle-viewer-watch.png`. The emulator captures (`circle-buckets.png`, `circle-reader.png`, `circle-viewer.png`) remain as the reference for the current pagination budget.
+
+## Verification (emulator)
+
 Masked captures on the emulator (466x466, same geometry as the watch):
 
 | Screen | Result |
@@ -52,4 +56,5 @@ Masked captures on the emulator (466x466, same geometry as the watch):
 | image viewer chrome | PASS - `circle-viewer.png` |
 
 Not yet re-checked on the hardware: the watch dropped off the hotspot after the host BSOD, so the physical re-verification of this layout is still pending. The emulator runs the same 466x466 geometry, so the mask is a faithful proxy, but a photo of the watch is the only real proof.
+
 

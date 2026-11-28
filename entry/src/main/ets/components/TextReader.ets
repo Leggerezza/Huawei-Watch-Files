@@ -4,6 +4,7 @@ import { common } from '@kit.AbilityKit';
 import { acquireScreen, releaseScreen } from '../services/ScreenKeeper';
 import { ReadingState, loadReading, saveReading } from '../services/ReadingProgress';
 import { TextCache } from '../services/MediaCache';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 class PageSlice {
   text: string = '';
@@ -222,7 +223,11 @@ export struct TextReader {
     const out: PageSlice = new PageSlice();
     const perLineUnits: number = Math.max(4, (186 / this.fontSize) * 1.0);
     const lineHeight: number = this.fontSize * 1.55;
-    const maxLines: number = Math.max(1, Math.floor(112 / lineHeight));
+    // Body height measured on the device (233 vp canvas minus the header, footer
+    // and padding). With the glyph widths calibrated above the model matches the
+    // rendered line count, so no extra headroom is needed; clip(true) stays as a
+    // safety net.
+    const maxLines: number = Math.max(1, Math.floor(126 / lineHeight));
     let units: number = 0;
     let lines: number = 1;
     let i: number = start;
@@ -303,6 +308,7 @@ export struct TextReader {
   }
 
   private onCrown(event: CrownEvent): void {
+    hilog.info(0x0100, 'WatchCrown', 'degree=%{public}s vel=%{public}s', `${event.degree}`, `${event.angularVelocity}`);
     this.crownAccum += event.degree;
     if (this.crownAccum > 10) {
       this.crownAccum = 0;
@@ -361,6 +367,16 @@ export struct TextReader {
         .padding({ left: 40, right: 40, top: 2 })
         .clip(true)
         .alignItems(HorizontalAlign.Start)
+        .gesture(
+          PanGesture({ fingers: 1, distance: 16 })
+            .onActionEnd((event: GestureEvent) => {
+              if (event.offsetY < -28) {
+                this.turn(1);
+              } else if (event.offsetY > 28) {
+                this.turn(-1);
+              }
+            })
+        )
         .onClick((event: ClickEvent) => {
           // Top quarter goes back, bottom quarter goes forward, middle is inert.
           const y: number = event.y;
@@ -409,11 +425,19 @@ export struct TextReader {
     .height('100%')
     .padding({ top: 30, bottom: 26 })
     .backgroundColor('#0B0E14')
+    // onDigitalCrown is only delivered to the focused component.
+    .focusable(true)
+    .defaultFocus(true)
+    .focusOnTouch(true)
     .onDigitalCrown((event: CrownEvent) => {
       this.onCrown(event);
     })
   }
 }
+
+
+
+
 
 
 

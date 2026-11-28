@@ -350,10 +350,14 @@ export struct ImageViewer {
     }
     .width('100%')
     .height('100%')
+    .focusable(true)
+    .defaultFocus(true)
+    .focusOnTouch(true)
     .onDigitalCrown((event: CrownEvent) => {
       this.onCrown(event);
     })
   }
 }
+
 
 
