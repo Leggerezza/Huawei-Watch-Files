@@ -9,6 +9,8 @@ import { getLocalIpv4 } from '../services/NetInfo';
 import { probeBackgroundModes } from '../services/BackgroundProbe';
 import { ImageViewer } from '../components/ImageViewer';
 import { Thumb } from '../components/Thumb';
+import { AudioViewer } from '../components/AudioViewer';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { TextReader } from '../components/TextReader';
 
 // 466x466 px at density 2 => 233x233 vp of layout space.
@@ -113,6 +115,8 @@ struct Index {
   // navigation
   @State screen: string = 'browse';
   @State imageList: FileItem[] = [];
+  @State audioList: FileItem[] = [];
+  @State audioIndex: number = 0;
   @State imageIndex: number = 0;
   @State openName: string = '';
   @State openReal: string = '';
@@ -301,6 +305,26 @@ struct Index {
       this.openCurrentImage();
       return;
     }
+    if (item.kind === MediaKind.AUDIO) {
+      hilog.info(0x0100, 'WatchAudio', 'tap audio %{public}s', item.path);
+      const items: FileItem[] = vm.data.snapshot();
+      const tracks: FileItem[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (!items[i].isDir && items[i].kind === MediaKind.AUDIO) {
+          tracks.push(items[i]);
+        }
+      }
+      this.audioList = tracks;
+      let at: number = 0;
+      for (let i = 0; i < tracks.length; i++) {
+        if (tracks[i].path === item.path) {
+          at = i;
+        }
+      }
+      this.audioIndex = at;
+      this.openCurrentAudio();
+      return;
+    }
     const ext: string = extensionOf(item.name);
     if (ext === 'txt' || ext === 'md' || ext === 'log') {
       this.openName = item.name;
@@ -340,6 +364,26 @@ struct Index {
     const next: number = (this.imageIndex + delta + this.imageList.length) % this.imageList.length;
     this.imageIndex = next;
     this.openCurrentImage();
+  }
+
+  private openCurrentAudio(): void {
+    if (this.audioList.length === 0 || this.store === null) {
+      return;
+    }
+    const item: FileItem = this.audioList[this.audioIndex];
+    this.openName = item.name;
+    this.openReal = this.store.real(item.path);
+    this.openSize = item.size;
+    this.screen = 'audio';
+  }
+
+  private stepAudio(delta: number): void {
+    if (this.audioList.length === 0) {
+      return;
+    }
+    const next: number = (this.audioIndex + delta + this.audioList.length) % this.audioList.length;
+    this.audioIndex = next;
+    this.openCurrentAudio();
   }
 
   private showDetail(index: number): void {
@@ -911,6 +955,25 @@ struct Index {
         })
       }
 
+      if (this.screen === 'audio') {
+        AudioViewer({
+          realPath: this.openReal,
+          name: this.openName,
+          fileSize: this.openSize,
+          ordinal: this.audioIndex + 1,
+          total: this.audioList.length,
+          onClose: () => {
+            this.screen = 'browse';
+          },
+          onPrev: () => {
+            this.stepAudio(-1);
+          },
+          onNext: () => {
+            this.stepAudio(1);
+          }
+        })
+      }
+
       if (this.screen === 'text') {
         TextReader({
           realPath: this.openReal,
@@ -971,6 +1034,8 @@ class FileDataPlaceholder implements IDataSource {
   unregisterDataChangeListener(listener: DataChangeListener): void {
   }
 }
+
+
 
 
 
