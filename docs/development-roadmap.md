@@ -11,7 +11,7 @@ State after this round. Status words are the ones the brief asked for: PASS / FA
 | 2 | file manager UI | PARTIAL | circle-safe layout (330 px square, 42/28 vp insets, 160 vp tab pill), detail sheet, rename/copy/move/delete, mkdir; no thumbnails |
 | 3 | FTP consistency + hardening | PASS | `stage3-ftp-review.md` maps every requirement to code and a test; suite 65/65. Timeouts are implemented but not yet asserted by a test |
 | 4 | HTTP file service | PARTIAL | implementation complete; device login flow still failing, see regression report |
-| 5 | image viewer | PARTIAL | full-screen viewer, desiredSize decode, button zoom (1.0-4.0x) with pan clamp, prev/next strip, error state, pixel cache with neighbour prefetch; no thumbnail grid yet |
+| 5 | image viewer + thumbnails | PARTIAL | full-screen viewer, desiredSize decode, button zoom, prev/next strip, pixel cache with prefetch; list rows now decode 96 px thumbnails on visibility (ThumbCache, 64 entries); no dedicated grid screen yet |
 | 6 | audio player | NOT STARTED | `AVPlayer` + `fdSrc`; nine formats verified by the earlier probe |
 | 7 | H.264 video player | NOT STARTED | XComponent surface, `surfaceId` only after `initialized` |
 | 8 | media metadata + playability | NOT STARTED | `AVMetadataExtractor`; capability cache keyed by path+size+mtime |
@@ -60,6 +60,7 @@ What the emulator cannot answer: real performance, real power/thermal behaviour,
 - Temp upload files are not swept at startup.
 - The FTP suite and HTTP suite are PowerShell scripts; a single runner that also captures device logs would make regressions one command.
 - No unit tests: the only tests are end-to-end against hardware, which is why every regression needs the watch awake.
+
 
 
 

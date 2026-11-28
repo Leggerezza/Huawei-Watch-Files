@@ -8,6 +8,7 @@ import { MediaKind, Playability, extensionOf } from '../services/Metadata';
 import { getLocalIpv4 } from '../services/NetInfo';
 import { probeBackgroundModes } from '../services/BackgroundProbe';
 import { ImageViewer } from '../components/ImageViewer';
+import { Thumb } from '../components/Thumb';
 import { TextReader } from '../components/TextReader';
 
 // 466x466 px at density 2 => 233x233 vp of layout space.
@@ -506,10 +507,11 @@ struct Index {
   @Builder
   fileRow(item: FileItem, index: number) {
     Row({ space: 4 }) {
-      Text(iconOf(item))
-        .fontSize(10)
-        .width(14)
-        .textAlign(TextAlign.Center)
+      Thumb({
+        realPath: this.store === null ? '' : this.store.real(item.path),
+        isImage: !item.isDir && item.kind === MediaKind.IMAGE,
+        icon: iconOf(item)
+      })
       Column({ space: 0 }) {
         Text(shortName(item.name, 11))
           .fontSize(9)
@@ -969,6 +971,7 @@ class FileDataPlaceholder implements IDataSource {
   unregisterDataChangeListener(listener: DataChangeListener): void {
   }
 }
+
 
 
 
